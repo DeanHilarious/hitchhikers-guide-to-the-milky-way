@@ -2,9 +2,12 @@
 
 > **从 NASA 2K 真实地球表面出发，沿太阳系 $60.19^\circ$ 黄银倾角三维螺旋世界线，一路漫游至比邻星、TRAPPIST-1、创生之柱 M16、银心黑洞 Sgr A\* 与 100,000 光年银河系全景的交互式 WebGL 3D 宇宙星图。**
 
+[![Live Demo](https://img.shields.io/badge/🚀_在线实景漫游-GitHub_Pages-00d4ff.svg)](https://deanhilarious.github.io/hitchhikers-guide-to-the-milky-way/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
 [![Three.js](https://img.shields.io/badge/Three.js-WebGL%20GLSL-049ef4.svg)](https://threejs.org/)
-[![Astronomy](https://img.shields.io/badge/Ephemeris-Gaia%20DR3%20%2F%20NASA%20JPL-ffd166.svg)](#天体物理与空间几何模型)
+[![Astronomy](https://img.shields.io/badge/Ephemeris-Gaia%20DR3%20%2F%20NASA%20JPL-ffd166.svg)](#1-太阳系-6019circ-黄银倾角--八大行星三维斜螺旋轨道模型)
+
+👉 **在线交互体验（GitHub Pages）：[https://deanhilarious.github.io/hitchhikers-guide-to-the-milky-way/](https://deanhilarious.github.io/hitchhikers-guide-to-the-milky-way/)**
 
 ---
 
