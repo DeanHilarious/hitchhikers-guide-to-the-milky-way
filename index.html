@@ -1,0 +1,549 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <link rel="icon" href="data:," />
+  <title>银河系漫游指南 — Milky Way &amp; Solar System 3D Interactive Atlas</title>
+  <style>
+    :root {
+      --panel-bg: rgba(7, 11, 22, 0.74);
+      --panel-border: rgba(114, 239, 221, 0.25);
+      --cyan: #64dfdf;
+      --gold: #ffd166;
+      --blue: #38b6ff;
+      --text-main: #f1f6ff;
+      --text-dim: rgba(215, 228, 250, 0.74);
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      user-select: none;
+    }
+
+    html, body {
+      width: 100%;
+      height: 100%;
+      overflow: hidden;
+      background: #03050a;
+      color: var(--text-main);
+      font-family: -apple-system, BlinkMacSystemFont, 'SF Pro Display', 'Segoe UI', Roboto, sans-serif;
+    }
+
+    #galaxy-canvas {
+      position: fixed;
+      inset: 0;
+      width: 100vw;
+      height: 100vh;
+      display: block;
+      cursor: grab;
+    }
+    #galaxy-canvas:active {
+      cursor: grabbing;
+    }
+
+    /* 3D Projected Space Labels Layer */
+    #labels-layer {
+      position: fixed;
+      inset: 0;
+      pointer-events: none;
+      z-index: 4;
+      overflow: hidden;
+    }
+
+    .space-label {
+      position: absolute;
+      top: 0;
+      left: 0;
+      transform: translate(-50%, -50%);
+      white-space: nowrap;
+    }
+
+    .landmark-pin, .planet-pin {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      background: rgba(8, 15, 30, 0.80);
+      border: 1px solid rgba(100, 223, 223, 0.45);
+      color: #e8f8ff;
+      padding: 3.5px 9px;
+      border-radius: 999px;
+      font-size: 11px;
+      cursor: pointer;
+      backdrop-filter: blur(6px);
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.48);
+    }
+    .planet-pin {
+      border-color: rgba(255, 209, 102, 0.48);
+      font-size: 10.5px;
+      padding: 2.5px 8px;
+    }
+    .landmark-pin:hover, .landmark-pin.active-pin,
+    .planet-pin:hover, .planet-pin.active-pin {
+      border-color: var(--gold);
+      background: rgba(25, 36, 62, 0.94);
+      color: var(--gold);
+    }
+
+    .pin-dot {
+      width: 6.5px;
+      height: 6.5px;
+      border-radius: 50%;
+      background: var(--cyan);
+      box-shadow: 0 0 8px var(--cyan);
+    }
+    .landmark-pin.active-pin .pin-dot, .planet-pin.active-pin .pin-dot {
+      background: var(--gold);
+      box-shadow: 0 0 10px var(--gold);
+    }
+
+    .arm-tag {
+      font-size: 11px;
+      letter-spacing: 0.08em;
+      text-transform: uppercase;
+      color: rgba(185, 215, 255, 0.62);
+      text-shadow: 0 2px 8px rgba(0, 0, 0, 0.9);
+      font-weight: 500;
+    }
+
+    /* Top Left & Right HUD Panels */
+    .hud-top {
+      position: fixed;
+      top: 18px;
+      left: 22px;
+      right: 22px;
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 16px;
+      pointer-events: none;
+      z-index: 10;
+    }
+
+    .glass-panel {
+      pointer-events: auto;
+      background: var(--panel-bg);
+      backdrop-filter: blur(16px);
+      -webkit-backdrop-filter: blur(16px);
+      border: 1px solid var(--panel-border);
+      border-radius: 16px;
+      padding: 14px 18px;
+      box-shadow: 0 14px 40px rgba(0, 0, 0, 0.55);
+    }
+
+    .dossier-card {
+      max-width: 445px;
+    }
+
+    .eyebrow {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 10px;
+      letter-spacing: 0.16em;
+      text-transform: uppercase;
+      color: var(--cyan);
+      margin-bottom: 5px;
+      font-weight: 600;
+    }
+
+    .lm-title {
+      font-size: 20px;
+      font-weight: 600;
+      color: #ffffff;
+      margin-bottom: 3px;
+    }
+
+    .lm-subtitle {
+      font-size: 12px;
+      color: var(--gold);
+      margin-bottom: 10px;
+    }
+
+    .telemetry-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 7px 12px;
+      background: rgba(255, 255, 255, 0.04);
+      border: 1px solid rgba(255, 255, 255, 0.08);
+      border-radius: 10px;
+      padding: 9px 11px;
+      margin-bottom: 9px;
+    }
+
+    .tm-item {
+      display: flex;
+      flex-direction: column;
+      gap: 2px;
+    }
+
+    .tm-label {
+      font-size: 9.5px;
+      text-transform: uppercase;
+      letter-spacing: 0.08em;
+      color: rgba(190, 210, 240, 0.6);
+    }
+
+    .tm-val {
+      font-size: 11.5px;
+      font-weight: 600;
+      color: #eef6ff;
+      font-variant-numeric: tabular-nums;
+    }
+
+    .lm-desc {
+      font-size: 11.8px;
+      line-height: 1.48;
+      color: var(--text-dim);
+      margin-bottom: 7px;
+    }
+
+    .coord-bar {
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 10.5px;
+      color: var(--cyan);
+      padding-top: 6px;
+      border-top: 1px solid rgba(255, 255, 255, 0.08);
+    }
+
+    /* Right Observatory Control Console */
+    .console-card {
+      width: 315px;
+      display: flex;
+      flex-direction: column;
+      gap: 10px;
+    }
+
+    .control-section-title {
+      font-size: 10px;
+      letter-spacing: 0.14em;
+      text-transform: uppercase;
+      color: var(--cyan);
+      font-weight: 600;
+      margin-bottom: 4px;
+    }
+
+    .band-group {
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 6px;
+    }
+
+    .chip-btn {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-main);
+      border: 1px solid rgba(255, 255, 255, 0.15);
+      border-radius: 8px;
+      padding: 5.5px 7px;
+      font-size: 11px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+      text-align: center;
+    }
+    .chip-btn:hover {
+      border-color: var(--cyan);
+      background: rgba(100, 223, 223, 0.14);
+    }
+    .chip-btn.active {
+      background: rgba(100, 223, 223, 0.24);
+      border-color: var(--cyan);
+      color: #ffffff;
+      font-weight: 600;
+    }
+
+    .slider-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      font-size: 11px;
+      color: var(--text-dim);
+    }
+    .slider-row input[type="range"] {
+      width: 145px;
+      accent-color: var(--cyan);
+      cursor: pointer;
+    }
+
+    .layer-toggles {
+      display: grid;
+      grid-template-columns: repeat(2, 1fr);
+      gap: 5px;
+    }
+
+    /* Bottom Dock: Solar System 8-Planet Strip + Cosmic Journey Bar */
+    .hud-bottom {
+      position: fixed;
+      bottom: 16px;
+      left: 22px;
+      right: 22px;
+      z-index: 10;
+      display: flex;
+      flex-direction: column;
+      gap: 8px;
+      pointer-events: none;
+    }
+
+    .planet-selector-bar {
+      pointer-events: auto;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 9px 15px;
+      flex-wrap: wrap;
+    }
+
+    .planet-pills {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 5px;
+      align-items: center;
+    }
+
+    .bar-tag {
+      font-size: 10.5px;
+      font-weight: 600;
+      letter-spacing: 0.1em;
+      text-transform: uppercase;
+      color: var(--gold);
+      margin-right: 4px;
+    }
+
+    .planet-btn {
+      background: rgba(255, 255, 255, 0.06);
+      color: var(--text-main);
+      border: 1px solid rgba(255, 255, 255, 0.14);
+      padding: 4.5px 10px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .planet-btn:hover {
+      border-color: var(--gold);
+      background: rgba(255, 209, 102, 0.16);
+    }
+    .planet-btn.active {
+      background: rgba(56, 182, 255, 0.25);
+      border-color: var(--blue);
+      color: #ffffff;
+      font-weight: 600;
+    }
+
+    .journey-scrubber-wrap {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex: 1;
+      min-width: 220px;
+      max-width: 420px;
+    }
+    .journey-scrubber-wrap span {
+      font-size: 10.5px;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+    #earth-galaxy-slider {
+      width: 100%;
+      accent-color: var(--gold);
+      cursor: pointer;
+    }
+
+    .bottom-bar {
+      pointer-events: auto;
+      display: flex;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+      gap: 10px;
+      padding: 10px 16px;
+    }
+
+    .landmark-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+    }
+
+    .nav-pill {
+      background: rgba(255, 255, 255, 0.07);
+      color: var(--text-main);
+      border: 1px solid rgba(255, 255, 255, 0.16);
+      padding: 6px 12px;
+      border-radius: 999px;
+      font-size: 11.5px;
+      cursor: pointer;
+      transition: all 0.2s ease;
+    }
+    .nav-pill:hover {
+      border-color: var(--cyan);
+      background: rgba(100, 223, 223, 0.16);
+    }
+    .nav-pill.active {
+      background: rgba(255, 209, 102, 0.24);
+      border-color: var(--gold);
+      color: var(--gold);
+      font-weight: 600;
+    }
+    .nav-pill.primary-journey {
+      background: linear-gradient(135deg, rgba(56, 182, 255, 0.32), rgba(255, 209, 102, 0.28));
+      border-color: var(--gold);
+      color: #fff;
+      font-weight: 600;
+    }
+    .nav-pill.recording {
+      background: rgba(239, 71, 111, 0.85);
+      border-color: #ff9ebb;
+      color: #fff;
+    }
+
+    .right-actions {
+      display: flex;
+      gap: 6px;
+      align-items: center;
+      flex-wrap: wrap;
+    }
+
+    @media (max-width: 920px) {
+      .console-card {
+        display: none;
+      }
+    }
+  </style>
+</head>
+<body>
+  <canvas id="galaxy-canvas"></canvas>
+  <div id="labels-layer"></div>
+
+  <!-- Top Telemetry Dossier & Observatory Controls -->
+  <header class="hud-top">
+    <section class="glass-panel dossier-card">
+      <div class="eyebrow">
+        <span id="lm-category">SOLAR SYSTEM · EARTH TO MILKY WAY</span>
+        <span>GAIA DR3 / JPL EPHEMERIS</span>
+      </div>
+      <h1 class="lm-title" id="lm-title">Earth · 地球 (漫游起点)</h1>
+      <div class="lm-subtitle" id="lm-subtitle">1.00 AU · Nitrogen-Oxygen Biosphere &amp; Lunar Orbit</div>
+
+      <div class="telemetry-grid">
+        <div class="tm-item">
+          <span class="tm-label">轨道/视野尺度 Scale</span>
+          <span class="tm-val" id="tm-scale">1.00 AU (1.496亿 km)</span>
+        </div>
+        <div class="tm-item">
+          <span class="tm-label">公转周期 / 距银心</span>
+          <span class="tm-val" id="tm-dist-core">365.256 Days · 26,000 ly</span>
+        </div>
+        <div class="tm-item">
+          <span class="tm-label">距太阳参考系 Ref</span>
+          <span class="tm-val" id="tm-dist-sol">1.00 AU from Sun</span>
+        </div>
+        <div class="tm-item">
+          <span class="tm-label">光谱与大气 Spectral</span>
+          <span class="tm-val" id="tm-spectral">N₂-O₂ Atmosphere · H₂O</span>
+        </div>
+        <div class="tm-item" style="grid-column: span 2;">
+          <span class="tm-label">质量与特征 Mass &amp; Properties</span>
+          <span class="tm-val" id="tm-mass">1.00 M⊕ · 1 Natural Satellite (Moon)</span>
+        </div>
+      </div>
+
+      <p class="lm-desc" id="lm-desc">
+        我们在宇宙中的蓝色家园，位于太阳系宜居带内，拥有液态海洋、动态云层与月球轨道。点击下方「从地球漫游至银河系」即可开启跨越 10 万光年的连续退行漫游。
+      </p>
+      <div class="coord-bar" id="tm-gal-coord">
+        l = 0.0° · b = +0.0° · Scale: Solar System Close-Up
+      </div>
+    </section>
+
+    <aside class="glass-panel console-card">
+      <div>
+        <div class="control-section-title">Observation Band · 观测波段</div>
+        <div class="band-group">
+          <button class="chip-btn active" data-spectral="0">可见光 Optical</button>
+          <button class="chip-btn" data-spectral="1">韦伯红外 JWST</button>
+          <button class="chip-btn" data-spectral="2">高能 X-Ray</button>
+        </div>
+      </div>
+
+      <div>
+        <div class="control-section-title">Dynamics · 行星公转与星系自转</div>
+        <div class="slider-row">
+          <span>八大行星公转速度</span>
+          <input type="range" id="slider-planet-speed" min="0" max="300" value="100" />
+        </div>
+        <div class="slider-row">
+          <span>银河差异自转速度</span>
+          <input type="range" id="slider-rotation" min="0" max="60" value="14" />
+        </div>
+        <div class="slider-row">
+          <span>恒星与星云曝光</span>
+          <input type="range" id="slider-exposure" min="50" max="200" value="118" />
+        </div>
+      </div>
+
+      <div>
+        <div class="control-section-title">Astrometric Overlays · 科学图层</div>
+        <div class="layer-toggles">
+          <button class="chip-btn active" id="toggle-grid">银道坐标网格</button>
+          <button class="chip-btn active" id="toggle-labels">行星与旋臂标注</button>
+          <button class="chip-btn active" id="toggle-orbit">太阳系公转轨道</button>
+          <button class="chip-btn active" id="toggle-dust">暗星际尘埃带</button>
+        </div>
+      </div>
+    </aside>
+  </header>
+
+  <!-- Bottom Two-Tier Dock: 1) Solar System Sun + 8 Planets Bar, 2) Galactic Landmarks & Earth->Galaxy Journey -->
+  <footer class="hud-bottom">
+    <!-- Row 1: Solar System 8 Planets + Sun Close-Up Inspector & Earth-to-Galaxy Continuous Scrubber -->
+    <div class="glass-panel planet-selector-bar">
+      <div class="planet-pills">
+        <span class="bar-tag">太阳系实景特写</span>
+        <button class="planet-btn" data-solar-body="all">🌀 60.2°螺旋全轨</button>
+        <button class="planet-btn" data-solar-body="sun">☀️ 太阳</button>
+        <button class="planet-btn" data-solar-body="mercury">☿ 水星</button>
+        <button class="planet-btn" data-solar-body="venus">♀ 金星</button>
+        <button class="planet-btn active" data-solar-body="earth">🌍 地球</button>
+        <button class="planet-btn" data-solar-body="mars">♂ 火星</button>
+        <button class="planet-btn" data-solar-body="jupiter">♃ 木星</button>
+        <button class="planet-btn" data-solar-body="saturn">♄ 土星</button>
+        <button class="planet-btn" data-solar-body="uranus">♅ 天王星</button>
+        <button class="planet-btn" data-solar-body="neptune">♆ 海王星</button>
+      </div>
+
+      <div class="journey-scrubber-wrap">
+        <span>🌍 地球</span>
+        <input type="range" id="earth-galaxy-slider" min="0" max="1000" value="0" />
+        <span>🌌 银河系</span>
+      </div>
+    </div>
+
+    <!-- Row 2: Macro Galactic Landmarks & Continuous Earth-to-Galaxy Tour -->
+    <div class="glass-panel bottom-bar">
+      <div class="landmark-nav">
+        <button class="nav-pill active" data-landmark="sol">☀️ 太阳系邻域</button>
+        <button class="nav-pill" data-landmark="proxima">🌟 比邻星 4.24ly</button>
+        <button class="nav-pill" data-landmark="trappist1">🪐 TRAPPIST-1</button>
+        <button class="nav-pill" data-landmark="m42">🌺 猎户星云 M42</button>
+        <button class="nav-pill" data-landmark="pillars">🏛️ 创生之柱 M16</button>
+        <button class="nav-pill" data-landmark="crab">⚡ 蟹状脉冲星</button>
+        <button class="nav-pill" data-landmark="eta_carinae">💥 海山二</button>
+        <button class="nav-pill" data-landmark="sgra">🕳️ 银心黑洞 Sgr A*</button>
+        <button class="nav-pill" data-landmark="overview">🌌 银河全景</button>
+      </div>
+
+      <div class="right-actions">
+        <button class="nav-pill primary-journey" id="btn-earth-journey">🌍➡️🌌 从地球漫游至银河系</button>
+        <button class="nav-pill active" id="btn-autoorbit">🔄 自动环绕: 开</button>
+        <button class="nav-pill" id="btn-record">🎥 录制漫游视频</button>
+      </div>
+    </div>
+  </footer>
+
+  <script type="module" src="./main.js"></script>
+</body>
+</html>
