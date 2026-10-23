@@ -208,6 +208,164 @@
       border-top: 1px solid rgba(255, 255, 255, 0.08);
     }
 
+    /* Voice Narration & Detailed Commentary Box inside Dossier */
+    .narration-box {
+      margin-top: 8px;
+      margin-bottom: 8px;
+      background: rgba(12, 22, 42, 0.72);
+      border: 1px solid rgba(100, 223, 223, 0.28);
+      border-radius: 11px;
+      padding: 9px 11px;
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .narration-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 8px;
+    }
+
+    .narration-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 10.5px;
+      font-weight: 600;
+      color: var(--gold);
+      letter-spacing: 0.04em;
+    }
+
+    .voice-wave {
+      display: inline-flex;
+      align-items: flex-end;
+      gap: 2px;
+      height: 11px;
+    }
+    .voice-wave i {
+      display: block;
+      width: 2.2px;
+      height: 3px;
+      background: var(--cyan);
+      border-radius: 2px;
+      transition: height 0.15s ease;
+    }
+    .voice-wave.speaking i:nth-child(1) { animation: eqBar 0.55s infinite ease-in-out 0.0s; }
+    .voice-wave.speaking i:nth-child(2) { animation: eqBar 0.55s infinite ease-in-out 0.15s; }
+    .voice-wave.speaking i:nth-child(3) { animation: eqBar 0.55s infinite ease-in-out 0.30s; }
+    .voice-wave.speaking i:nth-child(4) { animation: eqBar 0.55s infinite ease-in-out 0.10s; }
+
+    @keyframes eqBar {
+      0%, 100% { height: 3px; background: var(--cyan); }
+      50% { height: 11px; background: var(--gold); }
+    }
+
+    .narration-controls {
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+
+    .narration-time {
+      font-family: 'SF Mono', 'Menlo', monospace;
+      font-size: 10px;
+      color: rgba(195, 218, 250, 0.78);
+      margin-right: 2px;
+      white-space: nowrap;
+    }
+
+    .mini-audio-btn {
+      background: rgba(100, 223, 223, 0.14);
+      color: #f1f6ff;
+      border: 1px solid rgba(100, 223, 223, 0.38);
+      border-radius: 999px;
+      padding: 2.5px 8px;
+      font-size: 10.5px;
+      cursor: pointer;
+      transition: all 0.18s ease;
+      white-space: nowrap;
+    }
+    .mini-audio-btn:hover {
+      border-color: var(--gold);
+      color: var(--gold);
+      background: rgba(255, 209, 102, 0.18);
+    }
+
+    .narration-progress-track {
+      width: 100%;
+      height: 3px;
+      background: rgba(255, 255, 255, 0.10);
+      border-radius: 999px;
+      overflow: hidden;
+      cursor: pointer;
+    }
+    .narration-progress-fill {
+      height: 100%;
+      width: 0%;
+      background: linear-gradient(90deg, var(--cyan), var(--gold));
+      transition: width 0.08s linear;
+    }
+
+    .narration-script {
+      max-height: 108px;
+      overflow-y: auto;
+      font-size: 11.5px;
+      line-height: 1.58;
+      color: rgba(215, 228, 250, 0.72);
+      padding-right: 4px;
+      scrollbar-width: thin;
+      scrollbar-color: rgba(100, 223, 223, 0.35) transparent;
+    }
+    .narration-script .sent-span {
+      cursor: pointer;
+      border-radius: 4px;
+      padding: 1px 2px;
+      transition: color 0.2s ease, background 0.2s ease;
+    }
+    .narration-script .sent-span:hover {
+      color: #ffffff;
+      background: rgba(100, 223, 223, 0.12);
+    }
+    .narration-script .sent-span.active-sent {
+      color: #fff6d6;
+      background: rgba(255, 209, 102, 0.18);
+      font-weight: 500;
+    }
+
+    /* Cinema Floating Subtitle Bar above Bottom Dock */
+    .cinema-subtitle-bar {
+      align-self: center;
+      pointer-events: auto;
+      background: rgba(5, 10, 22, 0.84);
+      border: 1px solid rgba(255, 209, 102, 0.38);
+      backdrop-filter: blur(14px);
+      -webkit-backdrop-filter: blur(14px);
+      padding: 6px 18px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 500;
+      color: #fff8e7;
+      box-shadow: 0 8px 28px rgba(0, 0, 0, 0.65);
+      max-width: min(820px, 90vw);
+      text-align: center;
+      letter-spacing: 0.02em;
+      opacity: 0;
+      transform: translateY(6px);
+      transition: opacity 0.28s ease, transform 0.28s ease;
+    }
+    .cinema-subtitle-bar.visible {
+      opacity: 1;
+      transform: translateY(0);
+    }
+    .cinema-subtitle-bar .sub-speaker {
+      color: var(--cyan);
+      font-size: 11px;
+      font-weight: 600;
+      margin-right: 8px;
+    }
+
     /* Right Observatory Control Console */
     .console-card {
       width: 315px;
@@ -454,12 +612,46 @@
       <p class="lm-desc" id="lm-desc">
         我们在宇宙中的蓝色家园，位于太阳系宜居带内，拥有液态海洋、动态云层与月球轨道。点击下方「从地球漫游至银河系」即可开启跨越 10 万光年的连续退行漫游。
       </p>
+
+      <!-- Volcengine TTS Gentle Female Narration & Detailed Commentary Box -->
+      <div class="narration-box" id="narration-box">
+        <div class="narration-header">
+          <div class="narration-badge">
+            <span class="voice-wave" id="voice-wave"><i></i><i></i><i></i><i></i></span>
+            <span id="narration-title-tag">🎙️ 温柔女声解说详解 (火山引擎 TTS)</span>
+          </div>
+          <div class="narration-controls">
+            <span class="narration-time" id="narration-time">00:00 / 00:00</span>
+            <button class="mini-audio-btn" id="btn-narration-play" title="播放/暂停当前天体解说">▶ 播放解说</button>
+            <button class="mini-audio-btn" id="btn-narration-replay" title="从头重播当前解说">↻</button>
+          </div>
+        </div>
+        <div class="narration-progress-track" id="narration-progress-track" title="点击跳转解说进度">
+          <div class="narration-progress-fill" id="narration-progress-fill"></div>
+        </div>
+        <div class="narration-script" id="narration-script">
+          欢迎来到银河系漫游指南。点击任意行星或深空地标，即可聆听温柔女声深度解说（点击任意句子可直接跳转播放）。
+        </div>
+      </div>
+
       <div class="coord-bar" id="tm-gal-coord">
         l = 0.0° · b = +0.0° · Scale: Solar System Close-Up
       </div>
     </section>
 
     <aside class="glass-panel console-card">
+      <div>
+        <div class="control-section-title">Cosmic Audio · 温柔女声解说与深空纯音乐</div>
+        <div class="layer-toggles" style="margin-bottom: 6px;">
+          <button class="chip-btn active" id="toggle-narration-auto">🎙️ 自动语音解说: 开</button>
+          <button class="chip-btn active" id="toggle-bgm">🎵 宇宙深空BGM: 开</button>
+        </div>
+        <div class="slider-row">
+          <span>宇宙纯音乐 BGM 音量</span>
+          <input type="range" id="slider-bgm-vol" min="0" max="100" value="42" />
+        </div>
+      </div>
+
       <div>
         <div class="control-section-title">Observation Band · 观测波段</div>
         <div class="band-group">
@@ -499,6 +691,12 @@
 
   <!-- Bottom Two-Tier Dock: 1) Solar System Sun + 8 Planets Bar, 2) Galactic Landmarks & Earth->Galaxy Journey -->
   <footer class="hud-bottom">
+    <!-- Floating Cinema Subtitle Bar when Gentle Female Narration is Speaking -->
+    <div class="cinema-subtitle-bar" id="cinema-subtitle-bar">
+      <span class="sub-speaker">🎙️ 星空解说</span>
+      <span id="cinema-subtitle-text">欢迎来到银河系漫游指南</span>
+    </div>
+
     <!-- Row 1: Solar System 8 Planets + Sun Close-Up Inspector & Earth-to-Galaxy Continuous Scrubber -->
     <div class="glass-panel planet-selector-bar">
       <div class="planet-pills">

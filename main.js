@@ -299,7 +299,274 @@ const planetButtons = document.querySelectorAll('[data-solar-body]');
 const earthGalaxySlider = document.getElementById('earth-galaxy-slider');
 const earthJourneyBtn = document.getElementById('btn-earth-journey');
 
+// ============================================================================
+// VOLCENGINE TTS GENTLE FEMALE NARRATION & COSMIC AMBIENT BGM ENGINE
+// ============================================================================
+const elVoiceWave = document.getElementById('voice-wave');
+const elNarrationTime = document.getElementById('narration-time');
+const elBtnNarrationPlay = document.getElementById('btn-narration-play');
+const elBtnNarrationReplay = document.getElementById('btn-narration-replay');
+const elNarrationProgressTrack = document.getElementById('narration-progress-track');
+const elNarrationProgressFill = document.getElementById('narration-progress-fill');
+const elNarrationScript = document.getElementById('narration-script');
+const elCinemaSubtitleBar = document.getElementById('cinema-subtitle-bar');
+const elCinemaSubtitleText = document.getElementById('cinema-subtitle-text');
+const elToggleNarrationAuto = document.getElementById('toggle-narration-auto');
+const elToggleBgm = document.getElementById('toggle-bgm');
+const elSliderBgmVol = document.getElementById('slider-bgm-vol');
+
+const audioState = {
+  manifest: {},
+  currentTrackId: 'solar_earth',
+  autoPlayNarration: true,
+  bgmEnabled: true,
+  bgmBaseVolume: 0.42,
+  narrationPlaying: false,
+  userInteracted: false
+};
+
+const narrationAudio = new Audio();
+narrationAudio.preload = 'auto';
+
+const bgmAudio = new Audio('./audio/cosmic_bgm.m4a');
+bgmAudio.loop = true;
+bgmAudio.preload = 'auto';
+bgmAudio.volume = audioState.bgmBaseVolume;
+bgmAudio.addEventListener('error', () => {
+  if (!bgmAudio.src.endsWith('cosmic_bgm.mp3')) {
+    bgmAudio.src = './audio/cosmic_bgm.mp3';
+  }
+});
+
+function formatTimeMMSS(sec) {
+  if (!Number.isFinite(sec) || sec < 0) return '00:00';
+  const m = Math.floor(sec / 60);
+  const s = Math.floor(sec % 60);
+  return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
+}
+
+function updateBgmEffectiveVolume() {
+  if (!audioState.bgmEnabled) {
+    bgmAudio.volume = 0;
+    return;
+  }
+  // Smart voice ducking: lower BGM to 38% while the gentle female narrator is speaking
+  const duckFactor = audioState.narrationPlaying ? 0.38 : 1.0;
+  bgmAudio.volume = THREE.MathUtils.clamp(audioState.bgmBaseVolume * duckFactor, 0, 1);
+}
+
+function ensureBgmPlaying() {
+  if (!audioState.bgmEnabled) return;
+  updateBgmEffectiveVolume();
+  if (bgmAudio.paused) {
+    bgmAudio.play().catch(() => {});
+  }
+}
+
+function renderNarrationScriptDOM(trackId) {
+  const meta = audioState.manifest[trackId];
+  if (!meta) return;
+
+  elNarrationScript.innerHTML = '';
+  const sentences = meta.sentences && meta.sentences.length > 0
+    ? meta.sentences
+    : [{ text: meta.text, start: 0, end: meta.duration || 30 }];
+
+  sentences.forEach((sent, idx) => {
+    const span = document.createElement('span');
+    span.className = 'sent-span';
+    span.dataset.idx = String(idx);
+    span.dataset.start = String(sent.start);
+    span.dataset.end = String(sent.end);
+    span.textContent = sent.text;
+    span.addEventListener('click', () => {
+      audioState.userInteracted = true;
+      ensureBgmPlaying();
+      if (!narrationAudio.src.endsWith(`${trackId}.mp3`)) {
+        narrationAudio.src = `./audio/${trackId}.mp3`;
+      }
+      narrationAudio.currentTime = sent.start;
+      narrationAudio.play().catch(() => {});
+    });
+    elNarrationScript.appendChild(span);
+  });
+
+  elNarrationTime.textContent = `00:00 / ${formatTimeMMSS(meta.duration || 0)}`;
+  elNarrationProgressFill.style.width = '0%';
+}
+
+function updateNarrationSyncUI() {
+  const meta = audioState.manifest[audioState.currentTrackId];
+  if (!meta) return;
+
+  const cur = narrationAudio.currentTime || 0;
+  const dur = meta.duration || narrationAudio.duration || 1;
+  const pct = THREE.MathUtils.clamp((cur / dur) * 100, 0, 100);
+  elNarrationProgressFill.style.width = `${pct.toFixed(1)}%`;
+  elNarrationTime.textContent = `${formatTimeMMSS(cur)} / ${formatTimeMMSS(dur)}`;
+
+  const spans = elNarrationScript.querySelectorAll('.sent-span');
+  let activeSentenceText = '';
+  spans.forEach((sp) => {
+    const s = Number(sp.dataset.start);
+    const e = Number(sp.dataset.end);
+    const isAct = audioState.narrationPlaying && cur >= s - 0.08 && cur <= e + 0.18;
+    if (isAct) {
+      activeSentenceText = sp.textContent;
+      if (!sp.classList.contains('active-sent')) {
+        sp.classList.add('active-sent');
+        sp.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+      }
+    } else {
+      sp.classList.remove('active-sent');
+    }
+  });
+
+  if (audioState.narrationPlaying && activeSentenceText) {
+    elCinemaSubtitleText.textContent = activeSentenceText;
+    elCinemaSubtitleBar.classList.add('visible');
+  } else if (!audioState.narrationPlaying) {
+    elCinemaSubtitleBar.classList.remove('visible');
+  }
+}
+
+narrationAudio.addEventListener('play', () => {
+  audioState.narrationPlaying = true;
+  elVoiceWave.classList.add('speaking');
+  elBtnNarrationPlay.textContent = '⏸ 暂停解说';
+  updateBgmEffectiveVolume();
+  updateNarrationSyncUI();
+});
+
+narrationAudio.addEventListener('pause', () => {
+  audioState.narrationPlaying = false;
+  elVoiceWave.classList.remove('speaking');
+  elBtnNarrationPlay.textContent = '▶ 播放解说';
+  elCinemaSubtitleBar.classList.remove('visible');
+  updateBgmEffectiveVolume();
+});
+
+narrationAudio.addEventListener('ended', () => {
+  audioState.narrationPlaying = false;
+  elVoiceWave.classList.remove('speaking');
+  elBtnNarrationPlay.textContent = '▶ 播放解说';
+  elCinemaSubtitleBar.classList.remove('visible');
+  updateBgmEffectiveVolume();
+});
+
+narrationAudio.addEventListener('timeupdate', updateNarrationSyncUI);
+
+function switchNarrationTrack(trackId, autoStart = true) {
+  const prevTrack = audioState.currentTrackId;
+  audioState.currentTrackId = trackId;
+  renderNarrationScriptDOM(trackId);
+
+  if (prevTrack !== trackId || narrationAudio.paused) {
+    narrationAudio.src = `./audio/${trackId}.mp3`;
+    narrationAudio.currentTime = 0;
+  }
+
+  if (autoStart && audioState.autoPlayNarration && audioState.userInteracted) {
+    ensureBgmPlaying();
+    narrationAudio.play().catch(() => {});
+  }
+}
+
+// Load pre-generated Volcengine TTS manifest (18 tracks with word & sentence timestamps)
+fetch('./audio/manifest.json')
+  .then(r => r.json())
+  .then(data => {
+    audioState.manifest = data || {};
+    renderNarrationScriptDOM(audioState.currentTrackId);
+  })
+  .catch(() => {});
+
+elBtnNarrationPlay.addEventListener('click', () => {
+  audioState.userInteracted = true;
+  ensureBgmPlaying();
+  if (!narrationAudio.src || !narrationAudio.src.includes(audioState.currentTrackId)) {
+    narrationAudio.src = `./audio/${audioState.currentTrackId}.mp3`;
+  }
+  if (narrationAudio.paused) {
+    narrationAudio.play().catch(() => {});
+  } else {
+    narrationAudio.pause();
+  }
+});
+
+elBtnNarrationReplay.addEventListener('click', () => {
+  audioState.userInteracted = true;
+  ensureBgmPlaying();
+  narrationAudio.src = `./audio/${audioState.currentTrackId}.mp3`;
+  narrationAudio.currentTime = 0;
+  narrationAudio.play().catch(() => {});
+});
+
+elNarrationProgressTrack.addEventListener('click', (e) => {
+  audioState.userInteracted = true;
+  ensureBgmPlaying();
+  const rect = elNarrationProgressTrack.getBoundingClientRect();
+  const ratio = THREE.MathUtils.clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
+  const meta = audioState.manifest[audioState.currentTrackId];
+  const dur = (meta && meta.duration) || narrationAudio.duration || 45;
+  if (!narrationAudio.src || !narrationAudio.src.includes(audioState.currentTrackId)) {
+    narrationAudio.src = `./audio/${audioState.currentTrackId}.mp3`;
+  }
+  narrationAudio.currentTime = ratio * dur;
+  narrationAudio.play().catch(() => {});
+});
+
+elToggleNarrationAuto.addEventListener('click', () => {
+  audioState.userInteracted = true;
+  audioState.autoPlayNarration = !audioState.autoPlayNarration;
+  elToggleNarrationAuto.classList.toggle('active', audioState.autoPlayNarration);
+  elToggleNarrationAuto.textContent = audioState.autoPlayNarration ? '🎙️ 自动语音解说: 开' : '🎙️ 自动语音解说: 关';
+  if (audioState.autoPlayNarration && narrationAudio.paused) {
+    switchNarrationTrack(audioState.currentTrackId, true);
+  } else if (!audioState.autoPlayNarration && !narrationAudio.paused) {
+    narrationAudio.pause();
+  }
+});
+
+elToggleBgm.addEventListener('click', () => {
+  audioState.userInteracted = true;
+  audioState.bgmEnabled = !audioState.bgmEnabled;
+  elToggleBgm.classList.toggle('active', audioState.bgmEnabled);
+  elToggleBgm.textContent = audioState.bgmEnabled ? '🎵 宇宙深空BGM: 开' : '🎵 宇宙深空BGM: 关';
+  if (audioState.bgmEnabled) {
+    ensureBgmPlaying();
+  } else {
+    bgmAudio.pause();
+  }
+});
+
+elSliderBgmVol.addEventListener('input', (e) => {
+  audioState.userInteracted = true;
+  audioState.bgmBaseVolume = Number(e.target.value) * 0.01;
+  if (audioState.bgmBaseVolume > 0 && !audioState.bgmEnabled) {
+    audioState.bgmEnabled = true;
+    elToggleBgm.classList.add('active');
+    elToggleBgm.textContent = '🎵 宇宙深空BGM: 开';
+  }
+  ensureBgmPlaying();
+});
+
+// Unlock BGM & narration auto-play on first pointer interaction anywhere on the page
+window.addEventListener('pointerdown', () => {
+  if (!audioState.userInteracted) {
+    audioState.userInteracted = true;
+    ensureBgmPlaying();
+    if (audioState.autoPlayNarration && narrationAudio.paused) {
+      if (!narrationAudio.src || !narrationAudio.src.includes(audioState.currentTrackId)) {
+        narrationAudio.src = `./audio/${audioState.currentTrackId}.mp3`;
+      }
+      narrationAudio.play().catch(() => {});
+    }
+  }
+}, { once: false });
+
 function updateDossierForSolarBody(bodyId) {
+  switchNarrationTrack(`solar_${bodyId}`, true);
   if (bodyId === 'all') {
     elCategory.textContent = 'SOLAR SYSTEM · 60.2° ECLIPTIC TILT & 3D HELICAL ORBITS';
     elTitle.textContent = 'Solar System (60.2° 黄银倾角与三维螺旋轨道)';
@@ -326,6 +593,7 @@ function updateDossierForSolarBody(bodyId) {
 }
 
 function updateDossierForLandmark(lm) {
+  switchNarrationTrack(`lm_${lm.id}`, true);
   elCategory.textContent = lm.category;
   elTitle.textContent = lm.name;
   elSubtitle.textContent = lm.subtitle;
