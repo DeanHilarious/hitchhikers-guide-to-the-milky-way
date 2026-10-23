@@ -197,10 +197,6 @@ def generate_cosmic_bgm(mp3_path: str, duration_sec: float = 64.0, sr: int = 441
 
 def main(force=False):
     os.makedirs(AUDIO_DIR, exist_ok=True)
-    bgm_path = os.path.join(AUDIO_DIR, "cosmic_bgm.mp3")
-    if force or not os.path.exists(bgm_path):
-        generate_cosmic_bgm(bgm_path)
-
     scenes = json.load(open(NARRATION_JSON, encoding="utf-8"))
     speaker, res_id, context_prompt = asyncio.run(probe_speaker(PREFERRED_SPEAKER))
 

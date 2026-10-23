@@ -300,7 +300,7 @@ const earthGalaxySlider = document.getElementById('earth-galaxy-slider');
 const earthJourneyBtn = document.getElementById('btn-earth-journey');
 
 // ============================================================================
-// VOLCENGINE TTS GENTLE FEMALE NARRATION & COSMIC AMBIENT BGM ENGINE
+// VOLCENGINE TTS GENTLE FEMALE NARRATION ENGINE
 // ============================================================================
 const elVoiceWave = document.getElementById('voice-wave');
 const elNarrationTime = document.getElementById('narration-time');
@@ -312,15 +312,11 @@ const elNarrationScript = document.getElementById('narration-script');
 const elCinemaSubtitleBar = document.getElementById('cinema-subtitle-bar');
 const elCinemaSubtitleText = document.getElementById('cinema-subtitle-text');
 const elToggleNarrationAuto = document.getElementById('toggle-narration-auto');
-const elToggleBgm = document.getElementById('toggle-bgm');
-const elSliderBgmVol = document.getElementById('slider-bgm-vol');
 
 const audioState = {
   manifest: {},
   currentTrackId: 'solar_earth',
   autoPlayNarration: true,
-  bgmEnabled: true,
-  bgmBaseVolume: 0.42,
   narrationPlaying: false,
   userInteracted: false
 };
@@ -328,39 +324,11 @@ const audioState = {
 const narrationAudio = new Audio();
 narrationAudio.preload = 'auto';
 
-const bgmAudio = new Audio('./audio/cosmic_bgm.m4a');
-bgmAudio.loop = true;
-bgmAudio.preload = 'auto';
-bgmAudio.volume = audioState.bgmBaseVolume;
-bgmAudio.addEventListener('error', () => {
-  if (!bgmAudio.src.endsWith('cosmic_bgm.mp3')) {
-    bgmAudio.src = './audio/cosmic_bgm.mp3';
-  }
-});
-
 function formatTimeMMSS(sec) {
   if (!Number.isFinite(sec) || sec < 0) return '00:00';
   const m = Math.floor(sec / 60);
   const s = Math.floor(sec % 60);
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
-}
-
-function updateBgmEffectiveVolume() {
-  if (!audioState.bgmEnabled) {
-    bgmAudio.volume = 0;
-    return;
-  }
-  // Smart voice ducking: lower BGM to 38% while the gentle female narrator is speaking
-  const duckFactor = audioState.narrationPlaying ? 0.38 : 1.0;
-  bgmAudio.volume = THREE.MathUtils.clamp(audioState.bgmBaseVolume * duckFactor, 0, 1);
-}
-
-function ensureBgmPlaying() {
-  if (!audioState.bgmEnabled) return;
-  updateBgmEffectiveVolume();
-  if (bgmAudio.paused) {
-    bgmAudio.play().catch(() => {});
-  }
 }
 
 function renderNarrationScriptDOM(trackId) {
@@ -381,7 +349,6 @@ function renderNarrationScriptDOM(trackId) {
     span.textContent = sent.text;
     span.addEventListener('click', () => {
       audioState.userInteracted = true;
-      ensureBgmPlaying();
       if (!narrationAudio.src.endsWith(`${trackId}.mp3`)) {
         narrationAudio.src = `./audio/${trackId}.mp3`;
       }
@@ -434,7 +401,6 @@ narrationAudio.addEventListener('play', () => {
   audioState.narrationPlaying = true;
   elVoiceWave.classList.add('speaking');
   elBtnNarrationPlay.textContent = '⏸ 暂停解说';
-  updateBgmEffectiveVolume();
   updateNarrationSyncUI();
 });
 
@@ -443,7 +409,6 @@ narrationAudio.addEventListener('pause', () => {
   elVoiceWave.classList.remove('speaking');
   elBtnNarrationPlay.textContent = '▶ 播放解说';
   elCinemaSubtitleBar.classList.remove('visible');
-  updateBgmEffectiveVolume();
 });
 
 narrationAudio.addEventListener('ended', () => {
@@ -451,7 +416,6 @@ narrationAudio.addEventListener('ended', () => {
   elVoiceWave.classList.remove('speaking');
   elBtnNarrationPlay.textContent = '▶ 播放解说';
   elCinemaSubtitleBar.classList.remove('visible');
-  updateBgmEffectiveVolume();
 });
 
 narrationAudio.addEventListener('timeupdate', updateNarrationSyncUI);
@@ -467,7 +431,6 @@ function switchNarrationTrack(trackId, autoStart = true) {
   }
 
   if (autoStart && audioState.autoPlayNarration && audioState.userInteracted) {
-    ensureBgmPlaying();
     narrationAudio.play().catch(() => {});
   }
 }
@@ -483,7 +446,6 @@ fetch('./audio/manifest.json')
 
 elBtnNarrationPlay.addEventListener('click', () => {
   audioState.userInteracted = true;
-  ensureBgmPlaying();
   if (!narrationAudio.src || !narrationAudio.src.includes(audioState.currentTrackId)) {
     narrationAudio.src = `./audio/${audioState.currentTrackId}.mp3`;
   }
@@ -496,7 +458,6 @@ elBtnNarrationPlay.addEventListener('click', () => {
 
 elBtnNarrationReplay.addEventListener('click', () => {
   audioState.userInteracted = true;
-  ensureBgmPlaying();
   narrationAudio.src = `./audio/${audioState.currentTrackId}.mp3`;
   narrationAudio.currentTime = 0;
   narrationAudio.play().catch(() => {});
@@ -504,7 +465,6 @@ elBtnNarrationReplay.addEventListener('click', () => {
 
 elNarrationProgressTrack.addEventListener('click', (e) => {
   audioState.userInteracted = true;
-  ensureBgmPlaying();
   const rect = elNarrationProgressTrack.getBoundingClientRect();
   const ratio = THREE.MathUtils.clamp((e.clientX - rect.left) / Math.max(1, rect.width), 0, 1);
   const meta = audioState.manifest[audioState.currentTrackId];
@@ -520,7 +480,7 @@ elToggleNarrationAuto.addEventListener('click', () => {
   audioState.userInteracted = true;
   audioState.autoPlayNarration = !audioState.autoPlayNarration;
   elToggleNarrationAuto.classList.toggle('active', audioState.autoPlayNarration);
-  elToggleNarrationAuto.textContent = audioState.autoPlayNarration ? '🎙️ 自动语音解说: 开' : '🎙️ 自动语音解说: 关';
+  elToggleNarrationAuto.textContent = audioState.autoPlayNarration ? '🎙️ 切换漫游点自动语音解说: 开' : '🎙️ 切换漫游点自动语音解说: 关';
   if (audioState.autoPlayNarration && narrationAudio.paused) {
     switchNarrationTrack(audioState.currentTrackId, true);
   } else if (!audioState.autoPlayNarration && !narrationAudio.paused) {
@@ -528,34 +488,10 @@ elToggleNarrationAuto.addEventListener('click', () => {
   }
 });
 
-elToggleBgm.addEventListener('click', () => {
-  audioState.userInteracted = true;
-  audioState.bgmEnabled = !audioState.bgmEnabled;
-  elToggleBgm.classList.toggle('active', audioState.bgmEnabled);
-  elToggleBgm.textContent = audioState.bgmEnabled ? '🎵 宇宙深空BGM: 开' : '🎵 宇宙深空BGM: 关';
-  if (audioState.bgmEnabled) {
-    ensureBgmPlaying();
-  } else {
-    bgmAudio.pause();
-  }
-});
-
-elSliderBgmVol.addEventListener('input', (e) => {
-  audioState.userInteracted = true;
-  audioState.bgmBaseVolume = Number(e.target.value) * 0.01;
-  if (audioState.bgmBaseVolume > 0 && !audioState.bgmEnabled) {
-    audioState.bgmEnabled = true;
-    elToggleBgm.classList.add('active');
-    elToggleBgm.textContent = '🎵 宇宙深空BGM: 开';
-  }
-  ensureBgmPlaying();
-});
-
-// Unlock BGM & narration auto-play on first pointer interaction anywhere on the page
+// Unlock narration auto-play on first pointer interaction anywhere on the page
 window.addEventListener('pointerdown', () => {
   if (!audioState.userInteracted) {
     audioState.userInteracted = true;
-    ensureBgmPlaying();
     if (audioState.autoPlayNarration && narrationAudio.paused) {
       if (!narrationAudio.src || !narrationAudio.src.includes(audioState.currentTrackId)) {
         narrationAudio.src = `./audio/${audioState.currentTrackId}.mp3`;
