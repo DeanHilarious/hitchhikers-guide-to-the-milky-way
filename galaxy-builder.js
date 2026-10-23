@@ -1076,6 +1076,16 @@ export function buildMilkyWayWorld(scene) {
       const camCoreDist = camPos ? camPos.length() : 90.0;
       coreGlowSprite.material.opacity = THREE.MathUtils.smoothstep(camCoreDist, 6.0, 26.0) * 0.85;
 
+      // Hide distant Galactic landmark 3D micro-meshes when inspecting Solar System planets up close
+      const camSolDist = camPos ? camPos.distanceTo(SOL_CENTER) : 90.0;
+      const showGalacticMicro = camSolDist > 2.2;
+      m42Group.visible = showGalacticMicro;
+      crabGroup.visible = showGalacticMicro;
+      proximaGroup.visible = showGalacticMicro;
+      trappistGroup.visible = showGalacticMicro;
+      pillarsGroup.visible = showGalacticMicro;
+      etaCarGroup.visible = showGalacticMicro;
+
       // Show Fermi High-Energy Gamma/X-Ray bubbles in X-Ray mode
       const xrayWeight = Math.max(0, settings.spectralMode - 1.0);
       fermiMat.opacity = xrayWeight * 0.16;

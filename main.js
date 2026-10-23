@@ -350,7 +350,9 @@ export function selectSolarBody(bodyId, instant = false) {
   } else {
     const rt = solarSystem.planetRuntime.get(bodyId) || solarSystem.planetRuntime.get('earth');
     camState.targetCenter.copy(rt.worldPos);
-    camState.targetSpherical.set(rt.viewDistance, 1.15, rt.currentAngle + 0.65);
+    const baseAngle = Number.isFinite(rt.currentAngle) ? rt.currentAngle : 0.0;
+    const camTheta = bodyId === 'mars' ? baseAngle - 0.55 : baseAngle + 0.65;
+    camState.targetSpherical.set(rt.viewDistance, 1.15, camTheta);
     earthGalaxySlider.value = bodyId === 'earth' ? 0 : 120;
   }
 

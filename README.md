@@ -13,11 +13,13 @@
 
 ## ✨ 实机画面预览
 
-| 🌍 漫游起点：NASA 2K 真实地球 (`1.00 AU`) | 🌀 太阳系 $60.2^\circ$ 黄银斜交螺旋全轨 (`60 AU`) |
+| 🌍 漫游起点：NASA 2K 真实地球 (`1.00 AU`) | ☀️ 太阳：NASA SDO 2K 沸腾光球层 (`0.00 AU`) |
 | :---: | :---: |
-| ![NASA 2K Earth](./solar-earth-closeup.png) | ![60.2° Tilted Helical Solar System](./solar-8planets-orbits.png) |
-| **♂ 火星 · 水手号大峡谷与火卫双星 (`1.52 AU`)** | **♃ 木星 · 大红斑与四颗伽利略卫星 (`5.20 AU`)** |
+| ![NASA 2K Earth](./solar-earth-closeup.png) | ![NASA 2K Sun](./solar-sun-closeup.png) |
+| **♂ 火星 · NASA 海盗号 2K 水手号大峡谷与火卫双星 (`1.52 AU`)** | **♃ 木星 · 卡西尼号 2K 大红斑与四颗伽利略卫星 (`5.20 AU`)** |
 | ![Mars Close-Up](./solar-mars-closeup.png) | ![Jupiter Close-Up](./solar-jupiter-closeup.png) |
+| **♄ 土星 · 卡西尼号 2K 冰晶光环与环影互投 (`9.58 AU`)** | **🌀 太阳系 $60.2^\circ$ 黄银斜交螺旋全轨 (`60 AU`)** |
+| ![Saturn Close-Up](./solar-saturn-rings.png) | ![60.2° Tilted Helical Solar System](./solar-8planets-orbits.png) |
 | **🌟 比邻星与南门二三星系统 (`4.2465 ly`)** | **🪐 TRAPPIST-1 七行星共振宜居系统 (`40.66 ly`)** |
 | ![Proxima Centauri](./galaxy-proxima-centauri.png) | ![TRAPPIST-1](./galaxy-trappist1-system.png) |
 | **🏛️ 鹰状星云 M16「创生之柱」(`5,700 ly`)** | **💥 海山二 · 双叶侏儒星云 (`7,500 ly`)** |

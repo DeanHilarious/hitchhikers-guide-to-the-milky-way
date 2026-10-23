@@ -179,11 +179,13 @@ export const SOLAR_BODIES = [
   }
 ];
 
-// Custom Boiling Solar Photosphere & Corona Shader
+// Custom Boiling Solar Photosphere & Corona Shader (NASA SDO 2K + 3D Convection Granulation)
 const SUN_VERTEX_SHADER = /* glsl */ `
+varying vec2 vUv;
 varying vec3 vNormal;
 varying vec3 vLocalPos;
 void main() {
+  vUv = uv;
   vLocalPos = position;
   vNormal = normalize(normalMatrix * normal);
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
@@ -191,7 +193,9 @@ void main() {
 `;
 
 const SUN_FRAGMENT_SHADER = /* glsl */ `
+uniform sampler2D uSunMap;
 uniform float uTime;
+varying vec2 vUv;
 varying vec3 vNormal;
 varying vec3 vLocalPos;
 
@@ -219,22 +223,26 @@ float noise(vec3 p) {
 }
 
 void main() {
-  vec3 p = normalize(vLocalPos) * 6.5;
+  vec3 texCol = texture2D(uSunMap, vUv).rgb;
+  vec3 p = normalize(vLocalPos) * 7.5;
   float n1 = noise(p + vec3(uTime * 0.45, -uTime * 0.35, uTime * 0.25));
-  float n2 = noise(p * 2.4 - vec3(uTime * 0.7, uTime * 0.5, -uTime * 0.4));
+  float n2 = noise(p * 2.6 - vec3(uTime * 0.7, uTime * 0.5, -uTime * 0.4));
   float gran = n1 * 0.6 + n2 * 0.4;
 
   // Limb darkening & fiery solar corona rim
   float viewDot = abs(dot(vNormal, vec3(0.0, 0.0, 1.0)));
-  float limb = pow(viewDot, 0.45);
+  float limb = pow(viewDot, 0.48);
 
-  vec3 darkSpot = vec3(0.88, 0.28, 0.04);
-  vec3 midGold  = vec3(1.00, 0.68, 0.14);
-  vec3 hotWhite = vec3(1.00, 0.97, 0.82);
+  vec3 darkSpot = vec3(0.85, 0.24, 0.03);
+  vec3 midGold  = vec3(1.00, 0.66, 0.14);
+  vec3 hotWhite = vec3(1.00, 0.97, 0.84);
 
-  vec3 col = mix(darkSpot, midGold, smoothstep(0.22, 0.58, gran));
-  col = mix(col, hotWhite, smoothstep(0.58, 0.88, gran) * limb);
-  col += vec3(1.0, 0.45, 0.08) * (1.0 - viewDot) * 0.85;
+  vec3 procCol = mix(darkSpot, midGold, smoothstep(0.20, 0.58, gran));
+  procCol = mix(procCol, hotWhite, smoothstep(0.58, 0.88, gran) * limb);
+
+  // Blend real 2K SDO photosphere map with animated 3D convection cells
+  vec3 col = mix(procCol, texCol * (0.78 + 0.45 * gran), 0.62) * (0.42 + 0.68 * limb);
+  col += vec3(1.0, 0.42, 0.07) * pow(1.0 - viewDot, 1.8) * 1.15;
 
   gl_FragColor = vec4(col, 1.0);
 }
@@ -357,226 +365,368 @@ void main() {
   vec3 L = normalize(uSunWorldPos - vWorldPos);
 
   float viewDot = abs(dot(N, V));
-  float rim = pow(clamp(1.0 - viewDot, 0.0, 1.0), 2.6);
+  // Smoothly vanish at the outer boundary of the BackSide shell (viewDot -> 0)
+  // while peaking right at the planet's grazing horizon limb (viewDot ~ 0.34)
+  float outerFade = smoothstep(0.02, 0.36, viewDot);
+  float rim = outerFade * pow(clamp(1.0 - viewDot, 0.0, 1.0), 2.8) * 1.85;
   float sunSide = smoothstep(-0.45, 0.35, dot(N, L)) * 0.65 + 0.35;
 
-  vec3 skyBlue = mix(vec3(0.12, 0.52, 0.98), vec3(0.48, 0.86, 1.0), rim);
-  gl_FragColor = vec4(skyBlue, rim * sunSide * 0.68);
+  vec3 skyBlue = mix(vec3(0.12, 0.52, 0.98), vec3(0.48, 0.86, 1.0), clamp(rim, 0.0, 1.0));
+  gl_FragColor = vec4(skyBlue, clamp(rim * sunSide * 0.68, 0.0, 0.88));
 }
 `;
 
-// Generates high-resolution procedural planetary equirectangular textures on Canvas
-function createPlanetTexture(planetId) {
+// ============================================================================
+// PHOTOREALISTIC MARS, JUPITER, SATURN & PLANETARY SHADERS (2K NASA / CASSINI MAPS)
+// ============================================================================
+const PLANET_SURFACE_FRAGMENT_SHADER = /* glsl */ `
+uniform sampler2D uAlbedoMap;
+uniform sampler2D uRingMap;
+uniform vec3 uSunWorldPos;
+uniform vec3 uPlanetCenter;
+uniform vec3 uRingAxis;
+uniform vec3 uAtmoColor;
+uniform vec3 uTerminatorColor;
+uniform float uReliefScale;
+uniform float uAtmoStrength;
+uniform float uLimbDarken;
+uniform float uPlanetType; // 1 = Mars, 2 = Jupiter, 3 = Saturn, 4 = Other 2K Planet
+uniform float uRingInner;
+uniform float uRingOuter;
+
+varying vec2 vUv;
+varying vec3 vWorldNormal;
+varying vec3 vWorldPos;
+varying vec3 vViewDir;
+
+float luma(vec3 c) {
+  return dot(c, vec3(0.299, 0.587, 0.114));
+}
+
+void main() {
+  vec3 N = normalize(vWorldNormal);
+  vec3 V = normalize(vViewDir);
+
+  // Physical Sun direction blended with viewer key-light bias so the visible hemisphere
+  // exhibits rich 3D illumination, crisp surface/cloud detail, and a dramatic day/night terminator
+  vec3 physicalSunDir = normalize(uSunWorldPos - vWorldPos);
+  vec3 viewRight = normalize(cross(vec3(0.0, 1.0, 0.0), V) + vec3(0.001));
+  vec3 keyLightDir = normalize(V * 0.58 + viewRight * 0.72 + vec3(0.0, 0.24, 0.0));
+  vec3 L = normalize(mix(physicalSunDir, keyLightDir, 0.66));
+
+  vec3 texCol = texture2D(uAlbedoMap, vUv).rgb;
+
+  // Finite-difference tangent-space normal perturbation from 2K satellite map
+  vec2 duv = vec2(1.0 / 2048.0, 1.0 / 1024.0);
+  float hL = luma(texture2D(uAlbedoMap, vUv - vec2(duv.x, 0.0)).rgb);
+  float hR = luma(texture2D(uAlbedoMap, vUv + vec2(duv.x, 0.0)).rgb);
+  float hD = luma(texture2D(uAlbedoMap, vUv - vec2(0.0, duv.y)).rgb);
+  float hU = luma(texture2D(uAlbedoMap, vUv + vec2(0.0, duv.y)).rgb);
+  vec2 grad = vec2(hL - hR, hD - hU);
+
+  vec3 upVec = abs(N.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+  vec3 T = normalize(cross(upVec, N));
+  vec3 B = cross(N, T);
+  vec3 bumpedN = normalize(N + (T * grad.x + B * grad.y) * uReliefScale);
+
+  float NdotL = dot(bumpedN, L);
+  float smoothNdotL = dot(N, L);
+  float NdotV = max(0.0, dot(N, V));
+  float dayFactor = smoothstep(-0.16, 0.22, smoothNdotL);
+
+  vec3 baseAlbedo = texCol;
+  float specGlow = 0.0;
+
+  if (uPlanetType > 0.5 && uPlanetType < 1.5) {
+    // --- MARS (♂ 火星): Terracotta Iron-Oxide Regolith, Basalt Plains & Polar Ice Caps ---
+    baseAlbedo = pow(texCol, vec3(0.95)) * vec3(1.08, 0.98, 0.92);
+    // Oren-Nayar dusty opposition surge (rusty regolith back-scatter)
+    float dustyBackscatter = pow(max(0.0, dot(N, V)), 0.65) * 0.14;
+    baseAlbedo += vec3(0.24, 0.08, 0.03) * dustyBackscatter;
+
+    // North & South H2O / CO2 Polar Ice Cap frost glint
+    float polarMask = smoothstep(0.88, 0.96, vUv.y) + (1.0 - smoothstep(0.04, 0.12, vUv.y));
+    float iceMask = clamp(polarMask * smoothstep(0.55, 0.82, luma(texCol)), 0.0, 1.0);
+    vec3 H = normalize(L + V);
+    specGlow = pow(max(0.0, dot(bumpedN, H)), 28.0) * iceMask * 0.45;
+  } else if (uPlanetType > 1.5 && uPlanetType < 2.5) {
+    // --- JUPITER (♃ 木星): Rich Cassini Ammonia Cloud Belts, Festoons & Great Red Spot ---
+    baseAlbedo = pow(texCol, vec3(0.92)) * vec3(1.10, 1.03, 0.95);
+    // Enhance warm crimson-orange saturation inside the Great Red Spot & turbulent belts
+    float redness = clamp((texCol.r - texCol.b) * 1.8, 0.0, 1.0);
+    baseAlbedo = mix(baseAlbedo, baseAlbedo * vec3(1.14, 0.96, 0.88), redness * 0.55);
+  } else if (uPlanetType > 2.5 && uPlanetType < 3.5) {
+    // --- SATURN (♄ 土星): Golden Butterscotch Ammonia Bands & North Polar Hexagon ---
+    baseAlbedo = pow(texCol, vec3(0.93)) * vec3(1.08, 1.04, 0.94);
+  }
+
+  // Minnaert limb darkening for gas giants (or subtle rocky limb falloff)
+  float minnaert = mix(1.0, pow(NdotV, uLimbDarken), clamp(uLimbDarken * 2.2, 0.0, 1.0));
+  float diffuse = (max(0.0, NdotL) * 0.88 + 0.14) * minnaert;
+
+  // Real-time analytical Saturn Ring Shadow cast onto Saturn's cloud tops!
+  float ringShadow = 1.0;
+  if (uPlanetType > 2.5 && uPlanetType < 3.5) {
+    vec3 P = vWorldPos - uPlanetCenter;
+    vec3 A = normalize(uRingAxis);
+    float denom = dot(L, A);
+    if (abs(denom) > 0.001) {
+      float tHit = -dot(P, A) / denom;
+      if (tHit > 0.0) {
+        vec3 hitPos = P + L * tHit;
+        float rHit = length(hitPos);
+        if (rHit >= uRingInner && rHit <= uRingOuter) {
+          float uCoord = (rHit - uRingInner) / (uRingOuter - uRingInner);
+          float rAlpha = texture2D(uRingMap, vec2(uCoord, 0.5)).a;
+          ringShadow = 1.0 - rAlpha * 0.72;
+        }
+      }
+    }
+  }
+
+  // Twilight scattering along day/night terminator
+  float terminator = smoothstep(-0.24, 0.04, smoothNdotL) * (1.0 - smoothstep(0.02, 0.30, smoothNdotL));
+  vec3 twilightGlow = uTerminatorColor * terminator * 0.36;
+
+  // Fresnel atmospheric scattering along grazing horizon limb
+  float fresnel = pow(clamp(1.0 - NdotV, 0.0, 1.0), 2.7);
+  vec3 atmoRim = uAtmoColor * fresnel * uAtmoStrength * (0.28 + 0.72 * dayFactor);
+
+  vec3 nightSide = baseAlbedo * vec3(0.05, 0.06, 0.09);
+  vec3 daySide = baseAlbedo * diffuse * ringShadow + vec3(1.0, 0.96, 0.90) * specGlow + twilightGlow;
+  vec3 finalColor = mix(nightSide, daySide, dayFactor) + atmoRim;
+
+  gl_FragColor = vec4(finalColor, 1.0);
+}
+`;
+
+const PLANET_ATMO_FRAGMENT_SHADER = /* glsl */ `
+uniform vec3 uSunWorldPos;
+uniform vec3 uAtmoColor;
+uniform float uAtmoOpacity;
+varying vec3 vWorldNormal;
+varying vec3 vWorldPos;
+varying vec3 vViewDir;
+
+void main() {
+  vec3 N = normalize(vWorldNormal);
+  vec3 V = normalize(vViewDir);
+  vec3 physicalSunDir = normalize(uSunWorldPos - vWorldPos);
+  vec3 viewRight = normalize(cross(vec3(0.0, 1.0, 0.0), V) + vec3(0.001));
+  vec3 keyLightDir = normalize(V * 0.58 + viewRight * 0.72 + vec3(0.0, 0.24, 0.0));
+  vec3 L = normalize(mix(physicalSunDir, keyLightDir, 0.66));
+
+  float viewDot = abs(dot(N, V));
+  float outerFade = smoothstep(0.08, 0.42, viewDot);
+  float rim = outerFade * pow(clamp(1.0 - viewDot, 0.0, 1.0), 3.6) * 2.2;
+  // Only glow on the sunlit limb; vanish completely on the night-side limb so there is no detached dark-side ring
+  float sunSide = smoothstep(-0.05, 0.42, dot(N, L));
+
+  gl_FragColor = vec4(uAtmoColor, clamp(rim * sunSide * uAtmoOpacity, 0.0, 0.75));
+}
+`;
+
+const MOON_FRAGMENT_SHADER = /* glsl */ `
+uniform sampler2D uMoonMap;
+uniform vec3 uSunWorldPos;
+uniform vec3 uTintColor;
+uniform float uReliefScale;
+varying vec2 vUv;
+varying vec3 vWorldNormal;
+varying vec3 vWorldPos;
+varying vec3 vViewDir;
+
+float luma(vec3 c) {
+  return dot(c, vec3(0.299, 0.587, 0.114));
+}
+
+void main() {
+  vec3 N = normalize(vWorldNormal);
+  vec3 V = normalize(vViewDir);
+  vec3 physicalSunDir = normalize(uSunWorldPos - vWorldPos);
+  vec3 viewRight = normalize(cross(vec3(0.0, 1.0, 0.0), V) + vec3(0.001));
+  vec3 keyLightDir = normalize(V * 0.58 + viewRight * 0.72 + vec3(0.0, 0.24, 0.0));
+  vec3 L = normalize(mix(physicalSunDir, keyLightDir, 0.68));
+
+  vec3 texCol = texture2D(uMoonMap, vUv).rgb * uTintColor;
+  vec2 duv = vec2(1.0 / 512.0, 1.0 / 256.0);
+  float hL = luma(texture2D(uMoonMap, vUv - vec2(duv.x, 0.0)).rgb);
+  float hR = luma(texture2D(uMoonMap, vUv + vec2(duv.x, 0.0)).rgb);
+  float hD = luma(texture2D(uMoonMap, vUv - vec2(0.0, duv.y)).rgb);
+  float hU = luma(texture2D(uMoonMap, vUv + vec2(0.0, duv.y)).rgb);
+  vec2 grad = vec2(hL - hR, hD - hU);
+
+  vec3 upVec = abs(N.y) < 0.99 ? vec3(0.0, 1.0, 0.0) : vec3(1.0, 0.0, 0.0);
+  vec3 T = normalize(cross(upVec, N));
+  vec3 B = cross(N, T);
+  vec3 bumpedN = normalize(N + (T * grad.x + B * grad.y) * uReliefScale);
+
+  float diff = max(0.0, dot(bumpedN, L)) * 0.88 + 0.14;
+  float dayFactor = smoothstep(-0.18, 0.20, dot(N, L));
+  vec3 col = mix(texCol * 0.08, texCol * diff, dayFactor);
+  gl_FragColor = vec4(col, 1.0);
+}
+`;
+
+// ============================================================================
+// PHOTOREALISTIC CASSINI SATURN RING SHADER (WITH PLANETARY SHADOW & ICE GLINT)
+// ============================================================================
+const SATURN_RING_VERTEX_SHADER = /* glsl */ `
+varying vec3 vWorldPos;
+varying vec3 vViewDir;
+varying vec2 vUv;
+
+void main() {
+  vUv = uv;
+  vec4 worldPos = modelMatrix * vec4(position, 1.0);
+  vWorldPos = worldPos.xyz;
+  vViewDir = normalize(cameraPosition - worldPos.xyz);
+  gl_Position = projectionMatrix * viewMatrix * worldPos;
+}
+`;
+
+const SATURN_RING_FRAGMENT_SHADER = /* glsl */ `
+uniform sampler2D uRingMap;
+uniform vec3 uSunWorldPos;
+uniform vec3 uPlanetCenter;
+uniform vec3 uRingAxis;
+uniform float uPlanetRadius;
+uniform float uRingInner;
+uniform float uRingOuter;
+
+varying vec3 vWorldPos;
+varying vec3 vViewDir;
+varying vec2 vUv;
+
+void main() {
+  vec3 P = vWorldPos - uPlanetCenter;
+  float r = length(P);
+  float u = clamp((r - uRingInner) / (uRingOuter - uRingInner), 0.0, 1.0);
+
+  // Sample real 2K Cassini radial ring profile (D, C, B, Cassini Division, A, Encke Gap, F rings)
+  vec4 ringTex = texture2D(uRingMap, vec2(u, 0.5));
+  if (ringTex.a < 0.015) discard;
+
+  // Fine high-frequency concentric icy ringlet micro-structure
+  float microRinglets = 0.90 + 0.10 * sin(u * 420.0) * cos(u * 115.0);
+  vec3 ringColor = pow(ringTex.rgb, vec3(0.92)) * vec3(1.08, 1.02, 0.92) * microRinglets;
+
+  // Sunlight & viewer phase-angle ice crystal brilliance
+  vec3 V = normalize(vViewDir);
+  vec3 physicalSunDir = normalize(uSunWorldPos - vWorldPos);
+  vec3 viewRight = normalize(cross(vec3(0.0, 1.0, 0.0), V) + vec3(0.001));
+  vec3 keyLightDir = normalize(V * 0.58 + viewRight * 0.72 + vec3(0.0, 0.24, 0.0));
+  vec3 L = normalize(mix(physicalSunDir, keyLightDir, 0.66));
+
+  float backScatter = pow(max(0.0, dot(V, L)), 4.0) * 0.24;
+  ringColor += vec3(1.0, 0.95, 0.82) * backScatter;
+
+  // Real-time analytical shadow cast by Saturn's oblate globe across the back of the rings!
+  float planetShadow = 1.0;
+  float projL = dot(P, L);
+  if (projL < 0.0) {
+    vec3 A = normalize(uRingAxis);
+    // Account for Saturn's 1:0.95 polar flattening
+    vec3 Ps = P + A * dot(P, A) * 0.052;
+    vec3 Ls = normalize(L + A * dot(L, A) * 0.052);
+    float perpDist = length(Ps - Ls * dot(Ps, Ls));
+    planetShadow = smoothstep(uPlanetRadius * 0.94, uPlanetRadius * 1.03, perpDist);
+  }
+
+  vec3 finalRingCol = ringColor * mix(0.10, 1.08, planetShadow);
+  float finalAlpha = clamp(ringTex.a * 1.12, 0.0, 0.96);
+
+  gl_FragColor = vec4(finalRingCol, finalAlpha);
+}
+`;
+
+// High-detail procedural textures for the Galilean Moons (Io, Europa, Ganymede, Callisto), Phobos/Deimos & Titan
+function createMoonDetailTexture(moonId) {
   const canvas = document.createElement('canvas');
   canvas.width = 512;
   canvas.height = 256;
   const ctx = canvas.getContext('2d');
 
-  let seed = planetId.charCodeAt(0) * 997 + planetId.length * 131;
+  let seed = moonId.charCodeAt(0) * 1373 + moonId.length * 293;
   const rand = () => {
     seed = (seed * 16807) % 2147483647;
     return (seed - 1) / 2147483646;
   };
 
-  if (planetId === 'earth') {
-    // Deep blue ocean base
-    const oceanGrad = ctx.createLinearGradient(0, 0, 0, 256);
-    oceanGrad.addColorStop(0.0, '#dceefb');
-    oceanGrad.addColorStop(0.12, '#0b3c68');
-    oceanGrad.addColorStop(0.5, '#072c54');
-    oceanGrad.addColorStop(0.88, '#0b3c68');
-    oceanGrad.addColorStop(1.0, '#eaf4fc');
-    ctx.fillStyle = oceanGrad;
-    ctx.fillRect(0, 0, 512, 256);
-
-    // Sculpted continents (Eurasia, Americas, Africa, Australia silhouettes + green/ochre terrain)
-    const continents = [
-      { x: 120, y: 88, rx: 52, ry: 34, c1: '#2d6a4f', c2: '#74c69d' },
-      { x: 155, y: 162, rx: 32, ry: 46, c1: '#1b4332', c2: '#52b788' },
-      { x: 275, y: 118, rx: 46, ry: 48, c1: '#b08968', c2: '#40916c' },
-      { x: 355, y: 78, rx: 78, ry: 42, c1: '#2d6a4f', c2: '#95d5b2' },
-      { x: 425, y: 178, rx: 28, ry: 20, c1: '#bc6c25', c2: '#dda15e' }
-    ];
-    continents.forEach(ct => {
-      for (let p = 0; p < 36; p++) {
-        const px = ct.x + (rand() - 0.5) * ct.rx * 1.4;
-        const py = ct.y + (rand() - 0.5) * ct.ry * 1.4;
-        const prx = 8 + rand() * (ct.rx * 0.55);
-        const pry = 6 + rand() * (ct.ry * 0.55);
-        ctx.fillStyle = rand() < 0.65 ? ct.c1 : ct.c2;
-        ctx.globalAlpha = 0.78;
-        ctx.beginPath();
-        ctx.ellipse(px, py, prx, pry, (rand() - 0.5) * 1.2, 0, Math.PI * 2);
-        ctx.fill();
-      }
-    });
-
-    // Polar ice caps
-    ctx.globalAlpha = 0.92;
-    ctx.fillStyle = '#f4f9ff';
-    ctx.fillRect(0, 0, 512, 16);
-    ctx.fillRect(0, 240, 512, 16);
-
-    // Swirling white atmospheric clouds
-    ctx.fillStyle = '#ffffff';
-    for (let c = 0; c < 140; c++) {
-      ctx.globalAlpha = 0.16 + rand() * 0.28;
-      ctx.beginPath();
-      ctx.ellipse(rand() * 512, 20 + rand() * 216, 14 + rand() * 38, 2 + rand() * 6, (rand() - 0.5) * 0.3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-  } else if (planetId === 'jupiter') {
-    const bands = ['#c99065', '#e6ccb2', '#b07148', '#ddb892', '#9c5a3c', '#e3c5a8', '#c68b59', '#d8b48e'];
-    for (let y = 0; y < 256; y++) {
-      const bIdx = Math.floor((y / 256) * bands.length * 2.2) % bands.length;
-      ctx.fillStyle = bands[bIdx];
-      ctx.fillRect(0, y, 512, 2);
-    }
-    // Wavy atmospheric eddies
-    for (let i = 0; i < 180; i++) {
-      ctx.globalAlpha = 0.25 + rand() * 0.35;
-      ctx.fillStyle = bands[Math.floor(rand() * bands.length)];
-      ctx.beginPath();
-      ctx.ellipse(rand() * 512, rand() * 256, 18 + rand() * 45, 2 + rand() * 5, 0, 0, Math.PI * 2);
-      ctx.fill();
-    }
-    // The Great Red Spot
-    ctx.globalAlpha = 0.92;
-    ctx.fillStyle = '#c84b31';
-    ctx.beginPath();
-    ctx.ellipse(290, 165, 34, 18, 0.05, 0, Math.PI * 2);
-    ctx.fill();
-    ctx.strokeStyle = '#f4d3b8';
-    ctx.lineWidth = 3;
-    ctx.stroke();
-  } else if (planetId === 'saturn') {
-    const grad = ctx.createLinearGradient(0, 0, 0, 256);
-    grad.addColorStop(0.0, '#b59c6b');
-    grad.addColorStop(0.25, '#e8cfa0');
-    grad.addColorStop(0.5, '#f5deb3');
-    grad.addColorStop(0.75, '#d4b483');
-    grad.addColorStop(1.0, '#a68d5f');
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, 512, 256);
-    for (let y = 0; y < 256; y += 4) {
-      ctx.fillStyle = (y % 8 === 0) ? 'rgba(255,245,215,0.18)' : 'rgba(140,105,60,0.15)';
-      ctx.fillRect(0, y, 512, 2);
-    }
-  } else if (planetId === 'mars') {
-    // Rusty iron-oxide base gradient from polar regions to equatorial desert
-    const mGrad = ctx.createLinearGradient(0, 0, 0, 256);
-    mGrad.addColorStop(0.0, '#d88b68');
-    mGrad.addColorStop(0.22, '#c85220');
-    mGrad.addColorStop(0.50, '#b53f12');
-    mGrad.addColorStop(0.78, '#9e3610');
-    mGrad.addColorStop(1.0, '#d88b68');
-    ctx.fillStyle = mGrad;
-    ctx.fillRect(0, 0, 512, 256);
-
-    // Dark basaltic albedo features (Syrtis Major, Acidalia Planitia, Mare Erythraeum)
-    for (let i = 0; i < 240; i++) {
-      ctx.globalAlpha = 0.22 + rand() * 0.36;
-      ctx.fillStyle = rand() < 0.48 ? '#ef8354' : '#581f0e';
-      ctx.beginPath();
-      ctx.ellipse(rand() * 512, 20 + rand() * 216, 8 + rand() * 38, 4 + rand() * 18, rand() * 3, 0, Math.PI * 2);
-      ctx.fill();
-    }
-
-    // Valles Marineris (Great equatorial canyon system, 4,000 km long)
-    ctx.globalAlpha = 0.85;
-    ctx.strokeStyle = '#3d1308';
-    ctx.lineWidth = 4.5;
-    ctx.beginPath();
-    ctx.moveTo(185, 134);
-    ctx.bezierCurveTo(220, 129, 265, 138, 305, 132);
-    ctx.stroke();
-
-    // Olympus Mons & Tharsis Montes volcanic calderas
-    for (const [vx, vy, vr] of [[125, 102, 14], [148, 118, 9], [156, 130, 9], [164, 142, 9]]) {
-      ctx.globalAlpha = 0.75;
-      ctx.fillStyle = '#7f2b12';
-      ctx.beginPath();
-      ctx.arc(vx, vy, vr, 0, Math.PI * 2);
-      ctx.fill();
-      ctx.strokeStyle = '#f4a261';
-      ctx.lineWidth = 1.5;
-      ctx.stroke();
-    }
-
-    // North & South H2O / CO2 Polar Ice Caps
-    ctx.globalAlpha = 0.94;
-    ctx.fillStyle = '#fff8f0';
-    ctx.fillRect(0, 0, 512, 13);
-    ctx.fillRect(0, 243, 512, 13);
-  } else if (planetId === 'venus') {
-    const grad = ctx.createLinearGradient(0, 0, 0, 256);
-    grad.addColorStop(0, '#d9a05b');
-    grad.addColorStop(0.5, '#f3d088');
-    grad.addColorStop(1, '#c98d48');
-    ctx.fillStyle = grad;
+  if (moonId === 'io') {
+    // Io (木卫一): Volcanic sulfur yellow, orange-red plumes & dark lava calderas
+    const g = ctx.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0.0, '#c98a2c');
+    g.addColorStop(0.25, '#f4d35e');
+    g.addColorStop(0.5, '#ee964b');
+    g.addColorStop(0.75, '#f4d35e');
+    g.addColorStop(1.0, '#b5651d');
+    ctx.fillStyle = g;
     ctx.fillRect(0, 0, 512, 256);
     for (let i = 0; i < 160; i++) {
-      ctx.globalAlpha = 0.22;
-      ctx.fillStyle = rand() < 0.5 ? '#fff1c5' : '#b57835';
+      ctx.globalAlpha = 0.35 + rand() * 0.4;
+      ctx.fillStyle = rand() < 0.45 ? '#fff3b0' : (rand() < 0.75 ? '#d9534f' : '#3d2b1f');
       ctx.beginPath();
-      ctx.ellipse(rand() * 512, rand() * 256, 25 + rand() * 50, 4 + rand() * 9, 0.1, 0, Math.PI * 2);
+      ctx.ellipse(rand() * 512, rand() * 256, 6 + rand() * 26, 4 + rand() * 18, rand() * 3, 0, Math.PI * 2);
       ctx.fill();
     }
-  } else if (planetId === 'uranus' || planetId === 'neptune') {
-    const isUranus = planetId === 'uranus';
-    const grad = ctx.createLinearGradient(0, 0, 0, 256);
-    grad.addColorStop(0, isUranus ? '#56cfe1' : '#1d3557');
-    grad.addColorStop(0.5, isUranus ? '#90e0ef' : '#2ec4b6');
-    grad.addColorStop(1, isUranus ? '#48bfe3' : '#184e77');
-    ctx.fillStyle = grad;
+  } else if (moonId === 'europa') {
+    // Europa (木卫二): Smooth bright water-ice shell criss-crossed by reddish-brown tectonic lineae fractures
+    ctx.fillStyle = '#e8f1f5';
     ctx.fillRect(0, 0, 512, 256);
     for (let i = 0; i < 90; i++) {
-      ctx.globalAlpha = 0.2;
-      ctx.fillStyle = '#e0fbfc';
-      ctx.fillRect(0, rand() * 256, 512, 2 + rand() * 4);
-    }
-  } else {
-    // Mercury / Moon cratered regolith
-    ctx.fillStyle = '#8d8882';
-    ctx.fillRect(0, 0, 512, 256);
-    for (let i = 0; i < 240; i++) {
-      const r = 3 + rand() * 16;
-      const x = rand() * 512;
-      const y = rand() * 256;
-      ctx.globalAlpha = 0.35;
-      ctx.fillStyle = rand() < 0.5 ? '#5e5a55' : '#b8b2aa';
+      ctx.globalAlpha = 0.22;
+      ctx.fillStyle = rand() < 0.5 ? '#cfe5f0' : '#d8c3a5';
       ctx.beginPath();
-      ctx.arc(x, y, r, 0, Math.PI * 2);
+      ctx.ellipse(rand() * 512, rand() * 256, 20 + rand() * 45, 10 + rand() * 25, rand() * 3, 0, Math.PI * 2);
+      ctx.fill();
+    }
+    ctx.strokeStyle = '#9c5a3c';
+    for (let l = 0; l < 55; l++) {
+      ctx.globalAlpha = 0.28 + rand() * 0.32;
+      ctx.lineWidth = 0.8 + rand() * 1.6;
+      ctx.beginPath();
+      const x0 = rand() * 512;
+      const y0 = rand() * 256;
+      ctx.moveTo(x0, y0);
+      ctx.bezierCurveTo(x0 + (rand() - 0.5) * 140, y0 + (rand() - 0.5) * 90, x0 + (rand() - 0.5) * 200, y0 + (rand() - 0.5) * 120, x0 + (rand() - 0.5) * 260, y0 + (rand() - 0.5) * 140);
+      ctx.stroke();
+    }
+  } else if (moonId === 'ganymede' || moonId === 'callisto') {
+    // Ganymede (木卫三) & Callisto (木卫四): Dark ancient cratered regions + bright icy impact rays
+    const isGanymede = moonId === 'ganymede';
+    ctx.fillStyle = isGanymede ? '#9e9284' : '#6c6258';
+    ctx.fillRect(0, 0, 512, 256);
+    for (let i = 0; i < 220; i++) {
+      ctx.globalAlpha = 0.32;
+      ctx.fillStyle = rand() < 0.45 ? '#524940' : '#d6cfc7';
+      ctx.beginPath();
+      ctx.arc(rand() * 512, rand() * 256, 2 + rand() * 16, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  } else if (moonId === 'titan') {
+    // Titan (土卫六): Dense golden-orange nitrogen + methane stratospheric haze
+    const g = ctx.createLinearGradient(0, 0, 0, 256);
+    g.addColorStop(0.0, '#b56e28');
+    g.addColorStop(0.5, '#e8993e');
+    g.addColorStop(1.0, '#c47a2c');
+    ctx.fillStyle = g;
+    ctx.fillRect(0, 0, 512, 256);
+  } else {
+    // Phobos / Deimos cratered dark carbonaceous asteroid regolith
+    ctx.fillStyle = '#7d7268';
+    ctx.fillRect(0, 0, 512, 256);
+    for (let i = 0; i < 180; i++) {
+      ctx.globalAlpha = 0.38;
+      ctx.fillStyle = rand() < 0.55 ? '#4a423b' : '#a89b8e';
+      ctx.beginPath();
+      ctx.arc(rand() * 512, rand() * 256, 3 + rand() * 18, 0, Math.PI * 2);
       ctx.fill();
     }
   }
 
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
-  tex.needsUpdate = true;
-  return tex;
-}
-
-// Radial Saturn Ring Texture with Cassini Division
-function createSaturnRingTexture() {
-  const canvas = document.createElement('canvas');
-  canvas.width = 256;
-  canvas.height = 64;
-  const ctx = canvas.getContext('2d');
-  for (let x = 0; x < 256; x++) {
-    const u = x / 255; // 0 = inner, 1 = outer
-    // Cassini Division gap around u = 0.64..0.71
-    let alpha = 0.85;
-    if (u < 0.15) alpha = u / 0.15 * 0.35;
-    else if (u > 0.63 && u < 0.70) alpha = 0.08;
-    else if (u > 0.92) alpha = (1.0 - u) / 0.08 * 0.6;
-    else alpha = 0.55 + 0.3 * Math.sin(u * 65.0);
-
-    const tone = Math.floor(205 + 38 * Math.cos(u * 42.0));
-    ctx.fillStyle = `rgba(${tone}, ${Math.floor(tone * 0.89)}, ${Math.floor(tone * 0.68)}, ${alpha.toFixed(3)})`;
-    ctx.fillRect(x, 0, 1, 64);
-  }
-  const tex = new THREE.CanvasTexture(canvas);
   tex.needsUpdate = true;
   return tex;
 }
@@ -716,15 +866,24 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
   );
   galacticRefGroup.add(sunWakeLine);
 
+  // Load real 2K NASA / Cassini / Viking / MESSENGER / Voyager / SDO Planetary Maps
+  const texLoader = new THREE.TextureLoader();
+  const loadPlanetTex = (url) => {
+    const t = texLoader.load(url);
+    t.colorSpace = THREE.SRGBColorSpace;
+    return t;
+  };
+  const sunRealTex = loadPlanetTex('./textures/sun_2k.jpg');
+
   // 1. THE SUN (Boiling Photosphere Shader + Multi-layer Corona)
-  const sunUniforms = { uTime: { value: 0 } };
+  const sunUniforms = { uSunMap: { value: sunRealTex }, uTime: { value: 0 } };
   const sunMat = new THREE.ShaderMaterial({
     vertexShader: SUN_VERTEX_SHADER,
     fragmentShader: SUN_FRAGMENT_SHADER,
     uniforms: sunUniforms
   });
   const sunData = SOLAR_BODIES[0];
-  const sunMesh = new THREE.Mesh(new THREE.SphereGeometry(sunData.radius, 40, 40), sunMat);
+  const sunMesh = new THREE.Mesh(new THREE.SphereGeometry(sunData.radius, 64, 64), sunMat);
   sunMesh.userData = { landmarkId: 'sol', solarBodyId: 'sun' };
   eclipticGroup.add(sunMesh);
   interactiveMeshes.push(sunMesh);
@@ -748,21 +907,36 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
     data: sunData,
     mesh: sunMesh,
     worldPos: SOL_CENTER.clone(),
-    viewDistance: 0.42
+    currentAngle: 0.0,
+    viewDistance: 0.36
   });
-
-  const saturnRingTex = createSaturnRingTexture();
-
-  // Load real 2K NASA Blue Marble Earth & LRO Moon satellite maps
-  const texLoader = new THREE.TextureLoader();
-  const earthDayTex = texLoader.load('./textures/earth_atmos_2048.jpg');
+  const earthDayTex = loadPlanetTex('./textures/earth_atmos_2048.jpg');
   const earthSpecTex = texLoader.load('./textures/earth_specular_2048.jpg');
   const earthNormalTex = texLoader.load('./textures/earth_normal_2048.jpg');
-  const earthNightTex = texLoader.load('./textures/earth_lights_2048.png');
+  const earthNightTex = loadPlanetTex('./textures/earth_lights_2048.png');
   const earthCloudsTex = texLoader.load('./textures/earth_clouds_1024.png');
   earthCloudsTex.wrapS = THREE.RepeatWrapping;
   earthCloudsTex.wrapT = THREE.ClampToEdgeWrapping;
-  const moonRealTex = texLoader.load('./textures/moon_1024.jpg');
+  const moonRealTex = loadPlanetTex('./textures/moon_1024.jpg');
+
+  const marsRealTex = loadPlanetTex('./textures/mars_2k.jpg');
+  const jupiterRealTex = loadPlanetTex('./textures/jupiter_2k.jpg');
+  const saturnRealTex = loadPlanetTex('./textures/saturn_2k.jpg');
+  const saturnRingRealTex = texLoader.load('./textures/saturn_ring_alpha.png');
+  const mercuryRealTex = loadPlanetTex('./textures/mercury_2k.jpg');
+  const venusRealTex = loadPlanetTex('./textures/venus_2k.jpg');
+  const uranusRealTex = loadPlanetTex('./textures/uranus_2k.jpg');
+  const neptuneRealTex = loadPlanetTex('./textures/neptune_2k.jpg');
+
+  const realPlanetMaps = {
+    mercury: mercuryRealTex,
+    venus: venusRealTex,
+    mars: marsRealTex,
+    jupiter: jupiterRealTex,
+    saturn: saturnRealTex,
+    uranus: uranusRealTex,
+    neptune: neptuneRealTex
+  };
 
   const earthUniforms = {
     uDayMap: { value: earthDayTex },
@@ -862,6 +1036,11 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
     orbitPlane.add(planetHolder);
 
     let planetMat;
+    let planetUniforms = null;
+    let saturnRingUniforms = null;
+    const ringInnerR = body.radius * 1.25;
+    const ringOuterR = body.radius * 2.58;
+
     if (body.id === 'earth') {
       planetMat = new THREE.ShaderMaterial({
         vertexShader: EARTH_VERTEX_SHADER,
@@ -869,25 +1048,107 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
         uniforms: earthUniforms
       });
     } else {
-      const tex = createPlanetTexture(body.id);
-      planetMat = new THREE.MeshStandardMaterial({
-        map: tex,
-        roughness: 0.72,
-        metalness: 0.05,
-        emissive: new THREE.Color(body.orbitColor),
-        emissiveIntensity: 0.14
+      const pType = body.id === 'mars' ? 1.0 : (body.id === 'jupiter' ? 2.0 : (body.id === 'saturn' ? 3.0 : 4.0));
+      const reliefMap = {
+        mercury: 6.5,
+        venus: 1.2,
+        mars: 5.5,
+        jupiter: 2.2,
+        saturn: 1.4,
+        uranus: 0.6,
+        neptune: 1.2
+      };
+      const atmoColMap = {
+        mercury: new THREE.Vector3(0.65, 0.62, 0.58),
+        venus: new THREE.Vector3(0.98, 0.82, 0.48),
+        mars: new THREE.Vector3(0.96, 0.52, 0.30),
+        jupiter: new THREE.Vector3(0.94, 0.84, 0.66),
+        saturn: new THREE.Vector3(0.96, 0.88, 0.64),
+        uranus: new THREE.Vector3(0.48, 0.92, 0.98),
+        neptune: new THREE.Vector3(0.26, 0.58, 1.00)
+      };
+      const termColMap = {
+        mercury: new THREE.Vector3(0.35, 0.32, 0.28),
+        venus: new THREE.Vector3(0.88, 0.48, 0.14),
+        mars: new THREE.Vector3(0.86, 0.38, 0.18),
+        jupiter: new THREE.Vector3(0.86, 0.44, 0.18),
+        saturn: new THREE.Vector3(0.82, 0.56, 0.20),
+        uranus: new THREE.Vector3(0.18, 0.65, 0.78),
+        neptune: new THREE.Vector3(0.14, 0.36, 0.86)
+      };
+      const atmoStrMap = {
+        mercury: 0.08,
+        venus: 0.62,
+        mars: 0.64,
+        jupiter: 0.42,
+        saturn: 0.44,
+        uranus: 0.58,
+        neptune: 0.65
+      };
+      const limbDarkMap = {
+        mercury: 0.06,
+        venus: 0.22,
+        mars: 0.12,
+        jupiter: 0.28,
+        saturn: 0.32,
+        uranus: 0.26,
+        neptune: 0.28
+      };
+
+      planetUniforms = {
+        uAlbedoMap: { value: realPlanetMaps[body.id] || marsRealTex },
+        uRingMap: { value: saturnRingRealTex },
+        uSunWorldPos: { value: SOL_CENTER.clone() },
+        uPlanetCenter: { value: new THREE.Vector3() },
+        uRingAxis: { value: new THREE.Vector3(0, 1, 0) },
+        uAtmoColor: { value: atmoColMap[body.id] || new THREE.Vector3(0.8, 0.8, 0.8) },
+        uTerminatorColor: { value: termColMap[body.id] || new THREE.Vector3(0.6, 0.3, 0.1) },
+        uReliefScale: { value: reliefMap[body.id] ?? 2.0 },
+        uAtmoStrength: { value: atmoStrMap[body.id] ?? 0.4 },
+        uLimbDarken: { value: limbDarkMap[body.id] ?? 0.2 },
+        uPlanetType: { value: pType },
+        uRingInner: { value: ringInnerR },
+        uRingOuter: { value: ringOuterR }
+      };
+
+      planetMat = new THREE.ShaderMaterial({
+        vertexShader: EARTH_VERTEX_SHADER,
+        fragmentShader: PLANET_SURFACE_FRAGMENT_SHADER,
+        uniforms: planetUniforms
       });
     }
 
-    const sphereSegs = body.id === 'earth' ? 64 : 32;
+    const sphereSegs = ['earth', 'mars', 'jupiter', 'saturn'].includes(body.id) ? 64 : 40;
     const planetMesh = new THREE.Mesh(
       new THREE.SphereGeometry(body.radius, sphereSegs, sphereSegs),
       planetMat
     );
+
+    // Authentic gas-giant polar oblateness (flattening from rapid ~10h rotation)
+    if (body.id === 'jupiter') {
+      planetMesh.scale.set(1.034, 0.968, 1.034);
+    } else if (body.id === 'saturn') {
+      planetMesh.scale.set(1.048, 0.952, 1.048);
+    }
+
     if (body.id === 'earth') {
       planetHolder.rotation.z = ECLIPTIC_GALACTIC_TILT - 0.32;
       planetHolder.rotation.x = -0.38;
       planetMesh.rotation.z = 0.18;
+    } else if (body.id === 'saturn') {
+      // Tilt Saturn & its rings at a dramatic 26.7° Cassini viewing angle relative to the camera
+      planetHolder.rotation.z = ECLIPTIC_GALACTIC_TILT - 0.44;
+      planetHolder.rotation.x = -0.18;
+      planetMesh.rotation.z = 0.0;
+    } else if (body.id === 'jupiter') {
+      // Tilt Jupiter slightly so the Southern Tropical Zone (22°S Great Red Spot) and equatorial belts face the camera squarely
+      planetHolder.rotation.z = ECLIPTIC_GALACTIC_TILT - 0.15;
+      planetHolder.rotation.x = 0.14;
+      planetMesh.rotation.z = 0.05;
+    } else if (body.id === 'mars') {
+      planetHolder.rotation.z = ECLIPTIC_GALACTIC_TILT - 0.24;
+      planetHolder.rotation.x = -0.16;
+      planetMesh.rotation.z = 0.16;
     } else {
       planetHolder.rotation.z = ECLIPTIC_GALACTIC_TILT - 0.35;
       planetHolder.rotation.x = -0.25;
@@ -896,6 +1157,17 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
     planetMesh.userData = { landmarkId: 'sol', solarBodyId: body.id };
     planetHolder.add(planetMesh);
     interactiveMeshes.push(planetMesh);
+
+    const makeMoonMat = (tex, tintVec, relief = 3.5) => new THREE.ShaderMaterial({
+      vertexShader: EARTH_VERTEX_SHADER,
+      fragmentShader: MOON_FRAGMENT_SHADER,
+      uniforms: {
+        uMoonMap: { value: tex },
+        uSunWorldPos: { value: SOL_CENTER.clone() },
+        uTintColor: { value: tintVec },
+        uReliefScale: { value: relief }
+      }
+    });
 
     // Special planetary features:
     let moonPivot = null;
@@ -945,44 +1217,87 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
       moonPivot.rotation.z = 0.09;
       const moonMesh = new THREE.Mesh(
         new THREE.SphereGeometry(body.radius * 0.28, 32, 32),
-        new THREE.MeshStandardMaterial({
-          map: moonRealTex,
-          bumpMap: moonRealTex,
-          bumpScale: 0.0018,
-          roughness: 0.86,
-          emissive: 0x22252a,
-          emissiveIntensity: 0.20
-        })
+        makeMoonMat(moonRealTex, new THREE.Vector3(1.0, 0.99, 0.96), 4.5)
       );
       moonMesh.position.set(moonOrbitR, 0, 0);
       moonPivot.add(moonMesh);
       planetHolder.add(moonPivot);
     } else if (body.id === 'saturn') {
-      // Saturn's iconic multi-band ring system with Cassini Division
-      const ringGeo = new THREE.RingGeometry(body.radius * 1.38, body.radius * 2.55, 72);
-      const pos = ringGeo.attributes.position;
-      const uv = ringGeo.attributes.uv;
-      for (let k = 0; k < pos.count; k++) {
-        const vx = pos.getX(k);
-        const vy = pos.getY(k);
-        const r = Math.sqrt(vx * vx + vy * vy);
-        const u = (r - body.radius * 1.38) / (body.radius * (2.55 - 1.38));
-        uv.setXY(k, u, 0.5);
-      }
+      // Subtle golden stratospheric limb halo around Saturn
+      const saturnAtmo = new THREE.Mesh(
+        new THREE.SphereGeometry(body.radius * 1.032, 48, 48),
+        new THREE.ShaderMaterial({
+          vertexShader: EARTH_VERTEX_SHADER,
+          fragmentShader: PLANET_ATMO_FRAGMENT_SHADER,
+          uniforms: {
+            uSunWorldPos: planetUniforms.uSunWorldPos,
+            uAtmoColor: { value: new THREE.Vector3(0.96, 0.86, 0.58) },
+            uAtmoOpacity: { value: 0.34 }
+          },
+          transparent: true,
+          side: THREE.BackSide,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        })
+      );
+      saturnAtmo.scale.set(1.048, 0.952, 1.048);
+      planetHolder.add(saturnAtmo);
+
+      // Saturn's iconic Cassini 2K multi-band ring system (D, C, B, Cassini Division, A, Encke Gap, F)
+      // with real-time analytical planetary shadow cast by Saturn onto the rings!
+      const ringGeo = new THREE.RingGeometry(ringInnerR, ringOuterR, 180, 4);
       ringGeo.rotateX(Math.PI / 2);
+
+      saturnRingUniforms = {
+        uRingMap: { value: saturnRingRealTex },
+        uSunWorldPos: planetUniforms.uSunWorldPos,
+        uPlanetCenter: planetUniforms.uPlanetCenter,
+        uRingAxis: planetUniforms.uRingAxis,
+        uPlanetRadius: { value: body.radius },
+        uRingInner: { value: ringInnerR },
+        uRingOuter: { value: ringOuterR }
+      };
+
       const ringMesh = new THREE.Mesh(
         ringGeo,
-        new THREE.MeshBasicMaterial({
-          map: saturnRingTex,
+        new THREE.ShaderMaterial({
+          vertexShader: SATURN_RING_VERTEX_SHADER,
+          fragmentShader: SATURN_RING_FRAGMENT_SHADER,
+          uniforms: saturnRingUniforms,
           transparent: true,
           side: THREE.DoubleSide,
           depthWrite: false
         })
       );
-      ringMesh.rotation.z = body.axialTilt;
       planetHolder.add(ringMesh);
+
+      // Saturn's Major Moons: Enceladus (土卫二 - icy plume world) & Titan (土卫六 - golden nitrogen haze world)
+      moonPivot = new THREE.Group();
+      const saturnMoons = [
+        { id: 'europa', r: body.radius * 2.82, size: body.radius * 0.068, color: 0xe0f7ff, tint: new THREE.Vector3(0.95, 1.0, 1.05), ang: 0.72 }, // Enceladus
+        { id: 'titan',  r: body.radius * 3.32, size: body.radius * 0.115, color: 0xe8993e, tint: new THREE.Vector3(1.05, 0.88, 0.65), ang: 2.38 }  // Titan
+      ];
+      saturnMoons.forEach(sm => {
+        const sPts = [];
+        for (let m = 0; m <= 64; m++) {
+          const ma = (m / 64) * Math.PI * 2;
+          sPts.push(new THREE.Vector3(Math.cos(ma) * sm.r, 0, Math.sin(ma) * sm.r));
+        }
+        planetHolder.add(new THREE.Line(
+          new THREE.BufferGeometry().setFromPoints(sPts),
+          new THREE.LineBasicMaterial({ color: sm.color, transparent: true, opacity: 0.28 })
+        ));
+        const mTex = createMoonDetailTexture(sm.id);
+        const smMesh = new THREE.Mesh(
+          new THREE.SphereGeometry(sm.size, 24, 24),
+          makeMoonMat(mTex, sm.tint, 2.2)
+        );
+        smMesh.position.set(Math.cos(sm.ang) * sm.r, 0, Math.sin(sm.ang) * sm.r);
+        moonPivot.add(smMesh);
+      });
+      planetHolder.add(moonPivot);
     } else if (body.id === 'uranus') {
-      // Uranus's vertical pale-cyan ice ring
+      // Uranus's vertical pale-cyan epsilon ice ring
       const uRingGeo = new THREE.RingGeometry(body.radius * 1.45, body.radius * 1.72, 64);
       uRingGeo.rotateY(Math.PI / 2);
       const uRing = new THREE.Mesh(
@@ -997,13 +1312,18 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
       );
       planetHolder.add(uRing);
     } else if (body.id === 'mars') {
-      // Dusty salmon-amber Martian atmosphere halo + Phobos (火卫一) & Deimos (火卫二)
+      // Photorealistic Mie Dusty Martian Atmosphere Halo + Irregular Cratered Moons Phobos (火卫一) & Deimos (火卫二)
       const marsAtmo = new THREE.Mesh(
-        new THREE.SphereGeometry(body.radius * 1.09, 28, 28),
-        new THREE.MeshBasicMaterial({
-          color: 0xf4845f,
+        new THREE.SphereGeometry(body.radius * 1.034, 48, 48),
+        new THREE.ShaderMaterial({
+          vertexShader: EARTH_VERTEX_SHADER,
+          fragmentShader: PLANET_ATMO_FRAGMENT_SHADER,
+          uniforms: {
+            uSunWorldPos: planetUniforms.uSunWorldPos,
+            uAtmoColor: { value: new THREE.Vector3(0.96, 0.48, 0.26) },
+            uAtmoOpacity: { value: 0.42 }
+          },
           transparent: true,
-          opacity: 0.18,
           side: THREE.BackSide,
           blending: THREE.AdditiveBlending,
           depthWrite: false
@@ -1012,38 +1332,60 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
       planetHolder.add(marsAtmo);
 
       moonPivot = new THREE.Group();
-      moonPivot.rotation.z = 0.12;
+      moonPivot.rotation.z = 0.08;
+      const asteroidTex = createMoonDetailTexture('phobos');
       const marsMoons = [
-        { r: body.radius * 1.85, size: body.radius * 0.15, color: 0xb8a99a, ang: 0.6 }, // Phobos
-        { r: body.radius * 2.65, size: body.radius * 0.11, color: 0x9c8e80, ang: 2.4 }  // Deimos
+        { r: body.radius * 1.86, size: body.radius * 0.135, scale: [1.32, 0.88, 1.04], color: 0xb8a99a, tint: new THREE.Vector3(0.96, 0.88, 0.82), ang: -0.22 }, // Phobos (火卫一)
+        { r: body.radius * 2.58, size: body.radius * 0.095, scale: [1.24, 0.84, 0.96], color: 0x9c8e80, tint: new THREE.Vector3(0.88, 0.82, 0.76), ang: 2.35 }   // Deimos (火卫二)
       ];
       marsMoons.forEach(mm => {
         const pts = [];
-        for (let m = 0; m <= 48; m++) {
-          const ma = (m / 48) * Math.PI * 2;
+        for (let m = 0; m <= 64; m++) {
+          const ma = (m / 64) * Math.PI * 2;
           pts.push(new THREE.Vector3(Math.cos(ma) * mm.r, 0, Math.sin(ma) * mm.r));
         }
         planetHolder.add(new THREE.Line(
           new THREE.BufferGeometry().setFromPoints(pts),
-          new THREE.LineBasicMaterial({ color: mm.color, transparent: true, opacity: 0.35 })
+          new THREE.LineBasicMaterial({ color: mm.color, transparent: true, opacity: 0.34 })
         ));
         const mMesh = new THREE.Mesh(
-          new THREE.DodecahedronGeometry(mm.size, 1),
-          new THREE.MeshStandardMaterial({ color: mm.color, roughness: 0.9, emissive: mm.color, emissiveIntensity: 0.18 })
+          new THREE.SphereGeometry(mm.size, 24, 24),
+          makeMoonMat(asteroidTex, mm.tint, 5.5)
         );
+        mMesh.scale.set(mm.scale[0], mm.scale[1], mm.scale[2]);
         mMesh.position.set(Math.cos(mm.ang) * mm.r, 0, Math.sin(mm.ang) * mm.r);
         moonPivot.add(mMesh);
       });
       planetHolder.add(moonPivot);
     } else if (body.id === 'jupiter') {
-      // 4 Galilean Moons (Io 木卫一, Europa 木卫二, Ganymede 木卫三, Callisto 木卫四) + concentric orbital rings
+      // Subtle stratospheric hydrocarbon haze around Jupiter's oblate limb
+      const jupAtmo = new THREE.Mesh(
+        new THREE.SphereGeometry(body.radius * 1.030, 48, 48),
+        new THREE.ShaderMaterial({
+          vertexShader: EARTH_VERTEX_SHADER,
+          fragmentShader: PLANET_ATMO_FRAGMENT_SHADER,
+          uniforms: {
+            uSunWorldPos: planetUniforms.uSunWorldPos,
+            uAtmoColor: { value: new THREE.Vector3(0.95, 0.82, 0.62) },
+            uAtmoOpacity: { value: 0.34 }
+          },
+          transparent: true,
+          side: THREE.BackSide,
+          blending: THREE.AdditiveBlending,
+          depthWrite: false
+        })
+      );
+      jupAtmo.scale.set(1.034, 0.968, 1.034);
+      planetHolder.add(jupAtmo);
+
+      // 4 Galilean Moons (Io 木卫一, Europa 木卫二, Ganymede 木卫三, Callisto 木卫四) with authentic surface textures
       moonPivot = new THREE.Group();
-      moonPivot.rotation.z = 0.06;
+      moonPivot.rotation.z = 0.05;
       const galileanMoons = [
-        { r: body.radius * 1.48, size: body.radius * 0.085, color: 0xffbe0b, ang: 0.4 }, // Io (Volcanic sulfur)
-        { r: body.radius * 1.82, size: body.radius * 0.078, color: 0xdff6ff, ang: 1.9 }, // Europa (Subsurface ocean ice)
-        { r: body.radius * 2.22, size: body.radius * 0.110, color: 0xc8b8a6, ang: 3.5 }, // Ganymede (Largest moon)
-        { r: body.radius * 2.68, size: body.radius * 0.098, color: 0x8d7b68, ang: 5.1 }  // Callisto
+        { id: 'io',       r: body.radius * 1.48, size: body.radius * 0.082, color: 0xffbe0b, tint: new THREE.Vector3(1.08, 0.96, 0.72), ang: 0.42 }, // Io (Volcanic sulfur)
+        { id: 'europa',   r: body.radius * 1.82, size: body.radius * 0.074, color: 0xdff6ff, tint: new THREE.Vector3(0.98, 1.00, 1.04), ang: 1.92 }, // Europa (Lineae ice crust)
+        { id: 'ganymede', r: body.radius * 2.22, size: body.radius * 0.106, color: 0xc8b8a6, tint: new THREE.Vector3(0.96, 0.92, 0.86), ang: 3.55 }, // Ganymede (Largest moon)
+        { id: 'callisto', r: body.radius * 2.68, size: body.radius * 0.095, color: 0x8d7b68, tint: new THREE.Vector3(0.84, 0.78, 0.72), ang: 5.12 }  // Callisto (Cratered ice)
       ];
       galileanMoons.forEach(gm => {
         const jMoonPts = [];
@@ -1055,9 +1397,10 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
           new THREE.BufferGeometry().setFromPoints(jMoonPts),
           new THREE.LineBasicMaterial({ color: gm.color, transparent: true, opacity: 0.32 })
         ));
+        const gmTex = createMoonDetailTexture(gm.id);
         const gmMesh = new THREE.Mesh(
-          new THREE.SphereGeometry(gm.size, 16, 16),
-          new THREE.MeshStandardMaterial({ color: gm.color, roughness: 0.7, emissive: gm.color, emissiveIntensity: 0.25 })
+          new THREE.SphereGeometry(gm.size, 24, 24),
+          makeMoonMat(gmTex, gm.tint, 3.8)
         );
         gmMesh.position.set(Math.cos(gm.ang) * gm.r, 0, Math.sin(gm.ang) * gm.r);
         moonPivot.add(gmMesh);
@@ -1073,6 +1416,8 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
       orbitPlane,
       planetHolder,
       planetMesh,
+      planetUniforms,
+      saturnRingUniforms,
       cloudMesh,
       moonPivot,
       trailGeo,
@@ -1086,7 +1431,7 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
       focusShift,
       currentAngle: body.baseAngle,
       worldPos: new THREE.Vector3(),
-      viewDistance: Math.max(0.085, body.radius * 4.2)
+      viewDistance: body.id === 'saturn' ? body.radius * 6.4 : Math.max(0.085, body.radius * 4.2)
     });
   }
 
@@ -1202,6 +1547,7 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
         data,
         planetHolder,
         planetMesh,
+        planetUniforms,
         cloudMesh,
         moonPivot,
         trailGeo,
@@ -1227,12 +1573,20 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
           cloudMesh.rotation.y = 0.12 + time * 0.08;
         }
         earthUniforms.uCloudOffset.value = (0.12 + time * 0.08) / (Math.PI * 2);
+      } else if (id === 'mars') {
+        // Orient Mars so Valles Marineris canyon, Olympus Mons & Tharsis volcanoes face the camera at t=0
+        planetMesh.rotation.y = 2.65 + time * 0.38;
+      } else if (id === 'jupiter') {
+        // Orient Jupiter so the Great Red Spot & turbulent South Equatorial Belt face the camera at t=0
+        planetMesh.rotation.y = 5.42 + time * 0.65;
+      } else if (id === 'saturn') {
+        planetMesh.rotation.y = 1.40 + time * 0.55;
       } else {
-        planetMesh.rotation.y = time * 1.4;
+        planetMesh.rotation.y = time * 0.45;
       }
 
       if (moonPivot) {
-        moonPivot.rotation.y = -0.42 - time * 2.6;
+        moonPivot.rotation.y = -0.42 - time * 1.6;
       }
 
       // (A) Update glowing coplanar orbital arc inside the 60.2°-tilted Ecliptic Plane
@@ -1278,8 +1632,13 @@ export function buildDetailedSolarSystem(rootGroup, interactiveMeshes) {
       }
       helixAttr.needsUpdate = true;
 
-      // Compute exact world position of this planet for camera tracking & HUD labels
+      // Compute exact world position of this planet for camera tracking, HUD labels & Saturn ring-globe shadow shaders
+      planetHolder.updateMatrixWorld(true);
       planetHolder.getWorldPosition(rt.worldPos);
+      if (planetUniforms) {
+        planetUniforms.uPlanetCenter.value.copy(rt.worldPos);
+        planetUniforms.uRingAxis.value.set(0, 1, 0).transformDirection(planetHolder.matrixWorld).normalize();
+      }
     }
   }
 
